@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" content="#1a1a2e"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <title>Probably Weather</title>
+  <link rel="stylesheet" href="assets/app.css"/>
+  <link rel="manifest" href="manifest.json"/>
+</head>
+<body>
+  <div id="bg" aria-hidden="true">
+    <img id="bgImg" alt="" loading="lazy"/>
+    <div id="scrim"></div>
+  </div>
+
+  <div id="particles" aria-hidden="true"></div>
+
+  <div id="toast" class="toast"></div>
+  <div id="loader" class="loader hidden">Fetching probable weather...</div>
+
+  <div class="container">
+    <header class="header">
+      <div class="brand">
+        <div id="logoCircle" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="40" height="40">
+            <defs>
+              <linearGradient id="sunnyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#FFDD44"/>
+                <stop offset="100%" style="stop-color:#FFAA00"/>
+              </linearGradient>
+            </defs>
+            <circle cx="50" cy="50" r="48" fill="url(#sunnyGrad)"/>
+            <g fill="white">
+              <path d="M25 22 L25 78 L40 78 L40 54 L52 54 Q70 54 70 38 Q70 22 52 22 Z M40 34 L50 34 Q56 34 56 38 Q56 44 50 44 L40 44 Z"/>
+            </g>
+            <g fill="white" opacity="0.9">
+              <circle cx="78" cy="72" r="8"/>
+              <circle cx="70" cy="75" r="6"/>
+              <circle cx="85" cy="76" r="7"/>
+              <ellipse cx="78" cy="78" rx="12" ry="6"/>
+            </g>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title">Probably Weather</div>
+          <div id="location" class="brand-location">—</div>
+        </div>
+        <button id="myLocationBtn" class="my-location-btn" title="My Location">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+          </svg>
+          <span>My Location</span>
+        </button>
+      </div>
+
+      <div class="tagline">No more Ja-No-Maybe weather. Just Probably.</div>
+      <button id="saveCurrent" class="save-current-btn" title="Save this place">☆ Save</button>
+
+    </header>
+
+    <div class="home-layout">
+      <main id="home-screen" class="main">
+        <div id="temp" class="temp">--°</div>
+        <div id="tempHiLo" class="temp-hilo"></div>
+        <h1 id="headline" class="headline">Loading...</h1>
+        <div id="description" class="description">—</div>
+        <div id="weatherByline" class="weather-byline">Wind <span id="windValue">—</span> • Rain <span id="rainValue">—</span> • UV <span id="uvValue">—</span></div>
+        <!-- Hidden elements for JS compatibility -->
+        <div id="confidence" class="hidden"></div>
+        <div id="sources" class="hidden"></div>
+      </main>
+
+      <aside class="sidebar">
+        <div class="card card-hero">
+          <div id="extremeLabel" class="label">Today's Hero</div>
+          <div id="extremeValue" class="value">--</div>
+        </div>
+        <div class="card card-sources">
+          <div class="label">Sources</div>
+          <div id="confidenceValue" class="value">--</div>
+        </div>
+      </aside>
+    </div>
+
+    <section id="hourly-screen" class="screenPanel hourly-screen hidden">
+      <div class="screen-panel-header">
+        <h2 class="screen-title">Hourly Forecast</h2>
+      </div>
+      <div class="screen-panel-body">
+        <div id="hourly-timeline" class="hourly-timeline"></div>
+      </div>
+    </section>
+
+    <section id="week-screen" class="screenPanel week-screen hidden">
+      <div class="screen-panel-header">
+        <h2 class="screen-title">7-Day Forecast</h2>
+      </div>
+      <div class="screen-panel-body">
+        <div id="daily-cards" class="daily-cards"></div>
+      </div>
+    </section>
+
+    <section id="search-screen" class="screenPanel search-screen hidden">
+      <div class="screen-panel-header">
+        <h2 class="screen-title">Search & Favourites</h2>
+        <input id="searchInput" type="text" placeholder="Search for a place">
+        <button id="searchCancel" class="cancel-btn">Cancel</button>
+      </div>
+      <div class="screen-panel-body">
+        <div class="search-body">
+          <div class="search-lists">
+            <div class="section">
+              <h3>Saved places</h3>
+              <ul id="favoritesList"></ul>
+            </div>
+            <div class="section">
+              <h3>Recent</h3>
+              <ul id="recentList"></ul>
+            </div>
+          </div>
+          <p id="favLimit" class="fav-limit">You've saved 5 places. Remove one to add a new favourite.</p>
+        </div>
+      </div>
+      <div class="screen-panel-footer">
+        <button id="clearRecents" class="clear-recents">Clear recents</button>
+        <button id="manageFavorites" class="manage-btn">Manage favourites</button>
+      </div>
+    </section>
+
+    <section id="settings-screen" class="screenPanel settings-screen hidden">
+      <div class="screen-panel-header">
+        <h2 class="screen-title settings-title">Settings</h2>
+      </div>
+      <div class="screen-panel-body">
+        <div class="settings-section">
+        <h3>Units</h3>
+        <div class="settings-option">
+          <label for="unitsTemp">Temperature</label>
+          <select id="unitsTemp">
+            <option value="C">Celsius</option>
+            <option value="F">Fahrenheit</option>
+          </select>
+        </div>
+        <div class="settings-option">
+          <label for="unitsWind">Wind speed</label>
+          <select id="unitsWind">
+            <option value="kmh">km/h</option>
+            <option value="ms">m/s</option>
+            <option value="mph">mph</option>
+          </select>
+        </div>
+        </div>
+        <div class="settings-section">
+        <h3>Forecast display</h3>
+        <div class="settings-option">
+          <label for="probRange">Show temperature range</label>
+          <input type="checkbox" id="probRange">
+        </div>
+        <div class="settings-option">
+          <label for="timeFormat">Time format</label>
+          <select id="timeFormat">
+            <option value="24">24-hour</option>
+            <option value="12">12-hour</option>
+          </select>
+        </div>
+        </div>
+        <div class="settings-section">
+        <h3>Language</h3>
+        <div class="settings-option">
+          <label for="languageSelect">Language</label>
+          <select id="languageSelect">
+            <option value="en">English</option>
+            <option value="af">Afrikaans</option>
+            <option value="zu">Zulu</option>
+            <option value="xh">Xhosa</option>
+            <option value="st">Sotho</option>
+          </select>
+        </div>
+        </div>
+        <div class="settings-section">
+        <h3>Data sources</h3>
+        <p>Open-Meteo, WeatherAPI.com, MET Norway & Pirate Weather. Combined into a weighted forecast.</p>
+        </div>
+        <div class="settings-section">
+        <h3>About</h3>
+        <p id="aboutText">Probably Weather combines forecasts from Open-Meteo, WeatherAPI.com, MET Norway & Pirate Weather to give you a more reliable prediction.</p>
+        <p style="margin-top:8px;opacity:0.7;font-size:0.9em;">Version 1.2</p>
+        <p style="margin-top:8px;opacity:0.7;font-size:0.9em;">Got feedback or an issue? Drop us a mail:</p>
+        <p style="margin-top:4px;"><a href="mailto:howzit@probablyweather.co.za" style="color:#F5A623;text-decoration:none;">howzit@probablyweather.co.za</a></p>
+        <p style="margin-top:12px;opacity:0.5;font-size:0.8em;">© 2025 Probably Weather · <a href="/privacy" style="color:#999;text-decoration:underline;">Privacy Policy</a></p>
+        </div>
+      </div>
+    </section>
+
+    <nav class="nav">
+      <button id="navHome">Home</button>
+      <button id="navHourly">Hourly</button>
+      <button id="navWeek">Week</button>
+      <button id="navSearch">Search</button>
+      <button id="navSettings">Settings</button>
+    </nav>
+  </div>
+
+  <div id="heatOverlay"></div>
+
+  <footer class="footer">Data from Open-Meteo, WeatherAPI.com & MET Norway</footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
