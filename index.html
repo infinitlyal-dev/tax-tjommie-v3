@@ -172,6 +172,16 @@
     .welcome .subtitle { color: rgba(255,255,255,.55); position: relative; z-index: 1; }
     .welcome .btn { margin-top: 32px; position: relative; z-index: 1; min-width: 220px; box-shadow: 0 4px 20px rgba(224,106,66,.35); }
     .welcome .disclaimer { margin-top: 24px; font-size: .75rem; color: rgba(255,255,255,.3); max-width: 320px; line-height: 1.5; position: relative; z-index: 1; }
+    /* Two-door welcome buttons */
+    .welcome-doors { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; margin-top: 32px; position: relative; z-index: 1; }
+    .welcome-door { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; padding: 20px 16px; border: 1.5px solid var(--border); border-radius: var(--r); background: var(--surface); background-image: var(--surface-gradient); cursor: pointer; transition: all .2s; box-shadow: var(--depth-1); text-align: center; color: var(--text); }
+    .welcome-door:hover { border-color: var(--coral); box-shadow: var(--depth-2), 0 0 16px rgba(224,106,66,.12); transform: translateY(-2px); }
+    .welcome-door--quick { border-color: rgba(224,106,66,.25); }
+    .welcome-door--quick:hover { border-color: var(--coral); background: linear-gradient(180deg, rgba(224,106,66,.08) 0%, var(--surface) 100%); }
+    .welcome-door-icon { font-size: 1.5rem; margin-bottom: 2px; }
+    .welcome-door-title { font-size: 1rem; font-weight: 700; color: #fff; }
+    .welcome-door-desc { font-size: .8125rem; color: var(--text2); }
+    .welcome-door-time { font-size: .75rem; color: var(--text3); margin-top: 2px; }
     /* ===== INCOME LIVE CALC ===== */
     .live-calc { background: var(--surface); background-image: var(--surface-gradient); border: 1px solid var(--border); border-top: 1px solid rgba(255,255,255,.08); border-radius: var(--r); padding: 16px; margin: 20px 0; box-shadow: var(--depth-2); }
     .live-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: .9375rem; }
@@ -302,6 +312,7 @@
     .welcome .tagline { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .3s; }
     .welcome .subtitle { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .4s; }
     .welcome .btn { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .5s; }
+    .welcome-doors { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .5s; }
     /* Smooth scroll */
     html { scroll-behavior: smooth; }
     /* Focus-visible for accessibility */
@@ -537,7 +548,7 @@
     ];
 
     const INITIAL_STATE = {
-      user: { name: '', dob: '', occupation: '', monthlyGross: 0, taxYear: '2025/26', setupComplete: false, version: '3.0' },
+      user: { name: '', dob: '', occupation: '', monthlyGross: 0, taxYear: '2025/26', setupComplete: false, quickStart: false, version: '3.0' },
       taxProfile: {
         homeOffice: { enabled: false, percentage: 10, officeSqm: 0, totalSqm: 0, monthlyRent: 0, monthlyElectricity: 0, monthlyInternet: 0, monthlyWater: 0, monthlySecurity: 0, monthlyHomeInsurance: 0 },
         travel: { enabled: false, hasLogbook: false, workPercentage: 30, monthlyFuel: 0, monthlyInsurance: 0, recentRepairs: 0, method: 'actual', vehicleValue: 0, annualKm: 0, businessKm: 0, odometerStart: 0, odometerEnd: 0, vehicleDepreciation: 0 },
@@ -1084,7 +1095,7 @@
     }
 
     // ===== SCREEN: WELCOME =====
-    function WelcomeScreen({ onNext }) {
+    function WelcomeScreen({ onGuided, onQuickStart }) {
       return (
         <div className="welcome">
           <div className="logo">
@@ -1096,8 +1107,53 @@
           <h1>Tax Tjommie</h1>
           <div className="tagline">Your pocket tax companion</div>
           <p className="subtitle">Built for self-employed South Africans. Track expenses, maximise deductions, know your tax position — all year round.</p>
-          <button className="btn btn-primary" onClick={onNext}>Get started</button>
+          <div className="welcome-doors">
+            <button className="welcome-door" onClick={onGuided}>
+              <span className="welcome-door-icon">&#128203;</span>
+              <span className="welcome-door-title">Guide me step by step</span>
+              <span className="welcome-door-desc">Set up my full tax profile</span>
+              <span className="welcome-door-time">~5 minutes</span>
+            </button>
+            <button className="welcome-door welcome-door--quick" onClick={onQuickStart}>
+              <span className="welcome-door-icon">&#9889;</span>
+              <span className="welcome-door-title">Let me just start logging</span>
+              <span className="welcome-door-desc">3 quick questions, then go</span>
+              <span className="welcome-door-time">~30 seconds</span>
+            </button>
+          </div>
           <p className="disclaimer">Tax Tjommie helps you track and organise. Always confirm with a registered tax practitioner before filing.</p>
+        </div>
+      );
+    }
+
+    // ===== SCREEN: QUICK SETUP =====
+    function QuickSetupScreen({ state, dispatch, onComplete }) {
+      const u = state.user;
+      const canSubmit = u.name.trim() && u.occupation.trim() && u.monthlyGross > 0;
+      return (
+        <div className="screen">
+          <h2>Quick Setup</h2>
+          <p className="subtitle" style={{marginBottom: 24}}>Let's get the basics so you can start logging. You can set up your full tax profile anytime.</p>
+          <div className="field">
+            <label className="label" htmlFor="qs-name">What's your name?</label>
+            <input id="qs-name" className="input" value={u.name} onChange={e => dispatch({ type: 'SET_USER', payload: { name: e.target.value } })} placeholder="e.g. Thabo" />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="qs-occupation">What do you do?</label>
+            <input id="qs-occupation" className="input" value={u.occupation} onChange={e => dispatch({ type: 'SET_USER', payload: { occupation: e.target.value } })} placeholder="e.g. Graphic designer" />
+          </div>
+          <RandInput label="Roughly what do you earn per month?" value={u.monthlyGross} onChange={v => dispatch({ type: 'SET_USER', payload: { monthlyGross: v } })} placeholder="0" />
+          <div className="field">
+            <label className="label">Which tax year are you working on?</label>
+            <div style={{display:'flex', gap:12, marginTop:6}}>
+              {['2025/26','2024/25'].map(yr => (
+                <button key={yr} className={`btn btn-sm ${u.taxYear === yr ? 'btn-primary' : 'btn-secondary'}`} onClick={() => dispatch({ type:'SET_USER', payload:{ taxYear: yr } })} style={{flex:1}}>
+                  {yr}{yr === '2025/26' ? ' (current)' : ' (last year)'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button className="btn btn-primary mt24" disabled={!canSubmit} onClick={onComplete}>Start logging</button>
         </div>
       );
     }
@@ -4508,7 +4564,7 @@
       const [state, dispatch] = useReducer(reducer, INITIAL_STATE, loadState);
       const toast = useToast();
 
-      const onboardingScreens = ['welcome','details','income','deductions','tax-reveal','bridge','budget-setup'];
+      const onboardingScreens = ['welcome','quick-setup','details','income','deductions','tax-reveal','bridge','budget-setup'];
       const postScreens = ['dashboard','budget','log-expense','expenses','tax-summary','tax-calculator','provisional-tax','backpocket','settings','edit-details','edit-deductions','edit-deductions-full','budget-view','budget-setup','documents','import-data'];
 
       const getInitialScreen = () => {
@@ -4545,7 +4601,8 @@
 
       const renderScreen = () => {
         switch (screen) {
-          case 'welcome': return <WelcomeScreen onNext={() => nav('details')} />;
+          case 'welcome': return <WelcomeScreen onGuided={() => nav('details')} onQuickStart={() => nav('quick-setup')} />;
+          case 'quick-setup': return <QuickSetupScreen state={state} dispatch={dispatch} onComplete={() => { dispatch({ type: 'SET_USER', payload: { quickStart: true, setupComplete: true } }); nav('dashboard'); }} />;
           case 'details': return <DetailsScreen state={state} dispatch={dispatch} onNext={() => nav('income')} />;
           case 'income': return <IncomeScreen state={state} dispatch={dispatch} onNext={() => nav('deductions')} />;
           case 'deductions': return <DeductionsScreen state={state} dispatch={dispatch} onNext={() => nav('tax-reveal')} />;
@@ -4569,7 +4626,7 @@
           case 'import-data': return <ImportDataScreen state={state} dispatch={dispatch} navigate={nav} />;
           default:
             if (screen.startsWith('edit-expense/')) return <EditExpenseScreen state={state} dispatch={dispatch} navigate={nav} toast={toast} />;
-            return <WelcomeScreen onNext={() => nav('details')} />;
+            return <WelcomeScreen onGuided={() => nav('details')} onQuickStart={() => nav('quick-setup')} />;
         }
       };
 
