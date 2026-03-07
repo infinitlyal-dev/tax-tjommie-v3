@@ -170,7 +170,8 @@
     .welcome h1 { color: #fff; font-size: 2rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 8px; position: relative; z-index: 1; }
     .welcome .tagline { color: var(--coral); font-weight: 600; font-size: 1.0625rem; margin-bottom: 16px; position: relative; z-index: 1; }
     .welcome .subtitle { color: rgba(255,255,255,.55); position: relative; z-index: 1; }
-    .welcome .btn { margin-top: 32px; position: relative; z-index: 1; min-width: 220px; box-shadow: 0 4px 20px rgba(224,106,66,.35); }
+    .welcome .btn { position: relative; z-index: 1; min-width: 220px; box-shadow: 0 4px 20px rgba(224,106,66,.35); }
+    .welcome .btn-secondary { box-shadow: var(--depth-1); }
     .welcome .disclaimer { margin-top: 24px; font-size: .75rem; color: rgba(255,255,255,.3); max-width: 320px; line-height: 1.5; position: relative; z-index: 1; }
     /* ===== INCOME LIVE CALC ===== */
     .live-calc { background: var(--surface); background-image: var(--surface-gradient); border: 1px solid var(--border); border-top: 1px solid rgba(255,255,255,.08); border-radius: var(--r); padding: 16px; margin: 20px 0; box-shadow: var(--depth-2); }
@@ -301,7 +302,8 @@
     .welcome h1 { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .2s; }
     .welcome .tagline { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .3s; }
     .welcome .subtitle { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .4s; }
-    .welcome .btn { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .5s; }
+    .welcome .btn:nth-of-type(1) { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .5s; }
+    .welcome .btn:nth-of-type(2) { animation: slideUp .5s cubic-bezier(.4,0,.2,1) both; animation-delay: .6s; }
     /* Smooth scroll */
     html { scroll-behavior: smooth; }
     /* Focus-visible for accessibility */
@@ -537,7 +539,7 @@
     ];
 
     const INITIAL_STATE = {
-      user: { name: '', dob: '', occupation: '', monthlyGross: 0, taxYear: '2025/26', setupComplete: false, version: '3.0' },
+      user: { name: '', dob: '', occupation: '', monthlyGross: 0, taxYear: '2025/26', setupComplete: false, quickStart: false, profileCompleteness: 0, version: '3.0' },
       taxProfile: {
         homeOffice: { enabled: false, percentage: 10, officeSqm: 0, totalSqm: 0, monthlyRent: 0, monthlyElectricity: 0, monthlyInternet: 0, monthlyWater: 0, monthlySecurity: 0, monthlyHomeInsurance: 0 },
         travel: { enabled: false, hasLogbook: false, workPercentage: 30, monthlyFuel: 0, monthlyInsurance: 0, recentRepairs: 0, method: 'actual', vehicleValue: 0, annualKm: 0, businessKm: 0, odometerStart: 0, odometerEnd: 0, vehicleDepreciation: 0 },
@@ -557,6 +559,17 @@
       documents: [],
       provTaxPaid: {},
       meta: { lastExport: null, lastImport: null, storageWarningShown: false },
+      promptHistory: {
+        homeOffice: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        travel: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        phone: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        equipment: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        ra: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        medical: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        donations: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        entertainment: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+        fullProfileNudge: { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 },
+      },
       settings: { activeTaxYear: '2025/26', isPremium: false },
     };
 
@@ -928,6 +941,7 @@
         case 'LINK_DOCUMENT': return { ...state, expenses: state.expenses.map(e => e.id === action.expenseId ? { ...e, documentIds: [...(e.documentIds || []), action.docId] } : e) };
         case 'UNLINK_DOCUMENT': return { ...state, expenses: state.expenses.map(e => e.id === action.expenseId ? { ...e, documentIds: (e.documentIds || []).filter(id => id !== action.docId) } : e) };
         case 'SET_META': return { ...state, meta: { ...(state.meta || {}), ...action.payload } };
+        case 'SET_PROMPT': return { ...state, promptHistory: { ...(state.promptHistory || {}), [action.key]: { ...(state.promptHistory || {})[action.key], ...action.payload } } };
         case 'RESET': return INITIAL_STATE;
         default: return state;
       }
@@ -1084,7 +1098,7 @@
     }
 
     // ===== SCREEN: WELCOME =====
-    function WelcomeScreen({ onNext }) {
+    function WelcomeScreen({ onGuided, onQuickStart }) {
       return (
         <div className="welcome">
           <div className="logo">
@@ -1094,12 +1108,403 @@
             </svg>
           </div>
           <h1>Tax Tjommie</h1>
-          <div className="tagline">Your pocket tax companion</div>
+          <div className="tagline">Your pocket tax companion for freelancers</div>
           <p className="subtitle">Built for self-employed South Africans. Track expenses, maximise deductions, know your tax position — all year round.</p>
-          <button className="btn btn-primary" onClick={onNext}>Get started</button>
-          <p className="disclaimer">Tax Tjommie helps you track and organise. Always confirm with a registered tax practitioner before filing.</p>
+          <button className="btn btn-primary" onClick={onGuided} style={{marginTop:32,marginBottom:12}}>
+            <div style={{fontWeight:700}}>Guide me step by step</div>
+            <div style={{fontSize:'.8125rem',fontWeight:400,opacity:.8,marginTop:2}}>Set up my full tax profile · ~5 minutes</div>
+          </button>
+          <button className="btn btn-secondary" onClick={onQuickStart} style={{marginTop:0}}>
+            <div style={{fontWeight:700}}>Let me just start logging</div>
+            <div style={{fontSize:'.8125rem',fontWeight:400,opacity:.7,marginTop:2}}>3 quick questions, then go · ~30 seconds</div>
+          </button>
+          <p className="disclaimer">This app helps you track and organise. Always confirm with a registered tax practitioner before filing with SARS.</p>
         </div>
       );
+    }
+
+    // ===== SCREEN: QUICK SETUP (30-second onboarding) =====
+    function QuickSetupScreen({ state, dispatch, onComplete }) {
+      const u = state.user;
+      const canStart = u.name.trim() && u.occupation.trim() && u.monthlyGross > 0;
+      return (
+        <div className="screen">
+          <div className="ob-header">
+            <h2>Quick Setup</h2>
+            <p className="subtitle">Let's get the basics so you can start logging. You can set up your full tax profile anytime.</p>
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="f-qs-name">What's your name?</label>
+            <input id="f-qs-name" className="input" value={u.name} onChange={e => dispatch({ type:'SET_USER', payload:{ name: e.target.value } })} placeholder="e.g. Thabo" autoFocus />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="f-qs-occupation">What do you do?</label>
+            <input id="f-qs-occupation" className="input" value={u.occupation} onChange={e => dispatch({ type:'SET_USER', payload:{ occupation: e.target.value } })} placeholder="e.g. Graphic designer" />
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="f-qs-income">Roughly what do you earn per month?</label>
+            <div className="currency-wrap">
+              <span className="prefix">R</span>
+              <input id="f-qs-income" type="number" className="input" value={u.monthlyGross || ''} onChange={e => dispatch({ type:'SET_USER', payload:{ monthlyGross: Math.max(0, Number(e.target.value) || 0) } })} placeholder="0" inputMode="decimal" min="0" />
+            </div>
+          </div>
+          <div className="field">
+            <label className="label">Which tax year are you working on?</label>
+            <div className="toggle-row">
+              <button type="button" className={`toggle-btn ${u.taxYear === '2025/26' ? 'on' : ''}`} onClick={() => dispatch({ type:'SET_USER', payload:{ taxYear: '2025/26' } })}>2025/26 (current)</button>
+              <button type="button" className={`toggle-btn ${u.taxYear === '2024/25' ? 'on' : ''}`} onClick={() => dispatch({ type:'SET_USER', payload:{ taxYear: '2024/25' } })}>2024/25 (last year)</button>
+            </div>
+          </div>
+          <button className="btn btn-primary mt24" disabled={!canStart} style={{opacity: canStart ? 1 : 0.5}} onClick={onComplete}>Start logging</button>
+        </div>
+      );
+    }
+
+    // ===== PROFILE COMPLETENESS CALCULATION =====
+    function calcProfileCompleteness(state) {
+      let score = 0;
+      // Name + occupation (10%)
+      if (state.user.name && state.user.occupation) score += 10;
+      // Income entered (15%)
+      if (state.user.monthlyGross > 0) score += 15;
+      // Home office answered (10%)
+      const ph = state.promptHistory || {};
+      if (state.taxProfile.homeOffice.enabled || (ph.homeOffice && (ph.homeOffice.status === 'completed' || ph.homeOffice.status === 'not_applicable' || ph.homeOffice.status === 'declined'))) score += 10;
+      // Travel answered (10%)
+      if (state.taxProfile.travel.enabled || (ph.travel && (ph.travel.status === 'completed' || ph.travel.status === 'not_applicable' || ph.travel.status === 'declined'))) score += 10;
+      // Phone answered (10%)
+      if (state.taxProfile.phone.enabled || (ph.phone && (ph.phone.status === 'completed' || ph.phone.status === 'not_applicable' || ph.phone.status === 'declined'))) score += 10;
+      // Equipment acknowledged (5%)
+      if (state.taxProfile.equipment.enabled || (ph.equipment && (ph.equipment.status === 'completed' || ph.equipment.status === 'not_applicable' || ph.equipment.status === 'declined'))) score += 5;
+      // RA answered (15%)
+      if (state.taxProfile.retirement.enabled || (ph.ra && (ph.ra.status === 'completed' || ph.ra.status === 'not_applicable' || ph.ra.status === 'declined'))) score += 15;
+      // Medical answered (15%)
+      if (state.taxProfile.medical.enabled || (ph.medical && (ph.medical.status === 'completed' || ph.medical.status === 'not_applicable' || ph.medical.status === 'declined'))) score += 15;
+      // Donations answered (10%)
+      if (state.taxProfile.donations.enabled || (ph.donations && (ph.donations.status === 'completed' || ph.donations.status === 'not_applicable' || ph.donations.status === 'declined'))) score += 10;
+      return score;
+    }
+
+    // ===== CONTEXTUAL PROMPT TRIGGER LOGIC =====
+    function getContextualPrompt(expense, state) {
+      if (!state.user.quickStart) return null;
+      const ph = state.promptHistory || {};
+      const allExpenses = state.expenses || [];
+      const cat = expense.category || '';
+
+      // Helper: should we show this prompt?
+      const shouldShow = (key) => {
+        const p = ph[key] || { status: 'not_asked', shownCount: 0, relevantExpensesSince: 0 };
+        if (p.status === 'completed' || p.status === 'declined' || p.status === 'not_applicable') return false;
+        if (p.status === 'shown' && (p.relevantExpensesSince || 0) < 5) return false;
+        return true;
+      };
+
+      // Home office
+      if (cat.includes('Home office') && shouldShow('homeOffice') && !state.taxProfile.homeOffice.enabled) {
+        return { key: 'homeOffice', title: 'Quick question', text: 'You logged a home office expense. Do you work from home?', detail: 'If yes, you can deduct a percentage of your rent, electricity, and internet from your tax.', setupType: 'homeOffice' };
+      }
+      // Vehicle / travel
+      if ((cat.includes('Vehicle') || cat.includes('travel')) && shouldShow('travel') && !state.taxProfile.travel.enabled) {
+        return { key: 'travel', title: 'Quick question', text: 'Do you use your car for work?', detail: 'Set up your work-use % to calculate your travel deduction.', setupType: 'travel' };
+      }
+      // Phone
+      if (cat.includes('Phone') && shouldShow('phone') && !state.taxProfile.phone.enabled) {
+        return { key: 'phone', title: 'Quick question', text: 'What percentage of your phone do you use for work?', detail: 'This determines how much you can deduct.', setupType: 'phone' };
+      }
+      // Equipment (over R7,000)
+      if (cat.includes('Equipment') && expense.amount >= 7000 && shouldShow('equipment')) {
+        return { key: 'equipment', title: 'Good to know', text: 'Items over R7,000 are depreciated over 3 years.', detail: 'We\'ll calculate this for you automatically.', infoOnly: true };
+      }
+      // Client entertainment
+      if (cat.includes('Client entertainment') && shouldShow('entertainment')) {
+        return { key: 'entertainment', title: 'Quick reminder', text: 'Client entertainment is deductible.', detail: 'Just remember to note who you met and the business purpose. SARS may ask.', infoOnly: true };
+      }
+      // Medical
+      if (cat === 'Medical' && shouldShow('medical') && !state.taxProfile.medical.enabled) {
+        return { key: 'medical', title: 'Quick question', text: 'Do you have medical aid?', detail: 'Setting this up unlocks your medical tax credits.', setupType: 'medical' };
+      }
+      // Donations
+      if ((cat.includes('Donation') || cat.includes('Gifts')) && shouldShow('donations') && !state.taxProfile.donations.enabled) {
+        return { key: 'donations', title: 'Quick question', text: 'Do you donate to registered charities?', detail: 'With a Section 18A certificate, donations up to 10% of your income are deductible.', setupType: 'donations' };
+      }
+      // RA nudge after 5th work expense
+      const workExpCount = allExpenses.filter(e => isWorkCategory(e.category)).length;
+      if (workExpCount >= 4 && shouldShow('ra') && !state.taxProfile.retirement.enabled) {
+        return { key: 'ra', title: 'Quick question', text: 'Do you contribute to a Retirement Annuity?', detail: 'It\'s one of the biggest tax deductions available.', setupType: 'ra' };
+      }
+      // Full profile nudge after 10th expense
+      if (allExpenses.length >= 9 && shouldShow('fullProfileNudge')) {
+        return { key: 'fullProfileNudge', title: 'You\'re getting the hang of this!', text: 'Setting up your full tax profile takes 5 minutes and could save you thousands.', detail: null, isProfileNudge: true };
+      }
+      return null;
+    }
+
+    // ===== CONTEXTUAL PROMPT CARD COMPONENT =====
+    function ContextualPromptCard({ prompt, state, dispatch, navigate, onDismiss }) {
+      const [showMiniSetup, setShowMiniSetup] = useState(false);
+
+      const handleSetup = () => {
+        if (prompt.isProfileNudge) {
+          dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { status: 'completed' } });
+          navigate('edit-deductions-full');
+          return;
+        }
+        if (prompt.infoOnly) {
+          dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { status: 'completed' } });
+          onDismiss();
+          return;
+        }
+        setShowMiniSetup(true);
+      };
+
+      const handleNotNow = () => {
+        const ph = (state.promptHistory || {})[prompt.key] || {};
+        dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { status: 'shown', shownCount: (ph.shownCount || 0) + 1, lastShownDate: new Date().toISOString().slice(0, 10), relevantExpensesSince: 0 } });
+        onDismiss();
+      };
+
+      const handleNever = () => {
+        dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { status: 'declined' } });
+        onDismiss();
+      };
+
+      const handleMiniSetupComplete = () => {
+        dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { status: 'completed' } });
+        setShowMiniSetup(false);
+        onDismiss();
+      };
+
+      const handleMiniSetupNotApplicable = () => {
+        dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { status: 'not_applicable' } });
+        setShowMiniSetup(false);
+        onDismiss();
+      };
+
+      if (showMiniSetup) {
+        return <MiniSetupFlow type={prompt.setupType} state={state} dispatch={dispatch} onComplete={handleMiniSetupComplete} onNotApplicable={handleMiniSetupNotApplicable} onCancel={() => { setShowMiniSetup(false); handleNotNow(); }} />;
+      }
+
+      return (
+        <div className="card" style={{background:'rgba(224,106,66,.06)',border:'1px solid rgba(224,106,66,.15)',marginTop:16}}>
+          <div style={{fontWeight:600,marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
+            <span style={{fontSize:'1.125rem'}}>💡</span> {prompt.title}
+          </div>
+          <div style={{fontSize:'.9375rem',marginBottom:4}}>{prompt.text}</div>
+          {prompt.detail && <div style={{fontSize:'.875rem',color:'var(--text2)',marginBottom:12}}>{prompt.detail}</div>}
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            <button className="btn btn-sm btn-primary" onClick={handleSetup} style={{flex:'1 1 auto'}}>
+              {prompt.infoOnly ? 'Got it' : prompt.isProfileNudge ? 'Complete setup' : 'Yes, set this up'}
+            </button>
+            {!prompt.infoOnly && <button className="btn btn-sm btn-ghost" onClick={handleNotNow}>Not now</button>}
+            {!prompt.infoOnly && !prompt.isProfileNudge && <button className="btn btn-sm btn-ghost" onClick={handleNever} style={{color:'var(--text3)',fontSize:'.75rem'}}>Never</button>}
+          </div>
+        </div>
+      );
+    }
+
+    // ===== MINI SETUP FLOWS =====
+    function MiniSetupFlow({ type, state, dispatch, onComplete, onNotApplicable, onCancel }) {
+      const tp = state.taxProfile;
+
+      if (type === 'homeOffice') {
+        const [pct, setPct] = useState(tp.homeOffice.percentage || 15);
+        const [rent, setRent] = useState(tp.homeOffice.monthlyRent || 0);
+        const [elec, setElec] = useState(tp.homeOffice.monthlyElectricity || 0);
+        const [net, setNet] = useState(tp.homeOffice.monthlyInternet || 0);
+        const monthlyDed = Math.round((rent + elec + net) * pct / 100);
+        const annualDed = monthlyDed * 12;
+        const t = calcFullTax(state);
+        const saving = Math.round(annualDed * t.marginal);
+        return (
+          <div className="card" style={{border:'1px solid rgba(224,106,66,.2)'}}>
+            <h3 style={{marginBottom:4}}>Home Office Setup</h3>
+            <PctSlider label="What % of your home is your office?" value={pct} onChange={setPct} min={5} max={50} />
+            <RandInput label="Monthly rent or bond repayment" value={rent} onChange={setRent} />
+            <RandInput label="Monthly electricity/water" value={elec} onChange={setElec} />
+            <RandInput label="Monthly internet" value={net} onChange={setNet} />
+            {annualDed > 0 && (
+              <div className="success-box">
+                <div className="lbl">Your estimated home office deduction</div>
+                <div className="amount">{fR(monthlyDed)}/month = {fR(annualDed)}/year</div>
+                <div className="small mt12">This could save you ~{fR(saving)} in tax!</div>
+              </div>
+            )}
+            <div className="btn-row">
+              <button className="btn btn-primary btn-sm" onClick={() => { dispatch({ type:'SET_TP_CAT', cat:'homeOffice', payload:{ enabled: true, percentage: pct, monthlyRent: rent, monthlyElectricity: elec, monthlyInternet: net } }); onComplete(); }}>Save</button>
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (type === 'travel') {
+        const [pct, setPct] = useState(tp.travel.workPercentage || 40);
+        const [fuel, setFuel] = useState(tp.travel.monthlyFuel || 0);
+        const [ins, setIns] = useState(tp.travel.monthlyInsurance || 0);
+        const [hasLog, setHasLog] = useState(tp.travel.hasLogbook || false);
+        const monthlyDed = Math.round((fuel + ins) * pct / 100);
+        const annualDed = monthlyDed * 12;
+        const t = calcFullTax(state);
+        const saving = Math.round(annualDed * t.marginal);
+        return (
+          <div className="card" style={{border:'1px solid rgba(224,106,66,.2)'}}>
+            <h3 style={{marginBottom:4}}>Vehicle Setup</h3>
+            <PctSlider label="What % of your driving is for work?" value={pct} onChange={setPct} min={10} max={90} />
+            <div className="small mb16" style={{color:'var(--text3)'}}>Driving to client sites, meetings, suppliers — NOT commuting to a regular office</div>
+            <div className="field">
+              <label className="label">Do you keep a logbook?</label>
+              <YesNo value={hasLog} onChange={setHasLog} />
+            </div>
+            <RandInput label="Monthly fuel cost" value={fuel} onChange={setFuel} />
+            <RandInput label="Monthly car insurance" value={ins} onChange={setIns} />
+            {annualDed > 0 && (
+              <div className="success-box">
+                <div className="lbl">Your estimated travel deduction</div>
+                <div className="amount">{fR(monthlyDed)}/month = {fR(annualDed)}/year</div>
+                <div className="small mt12">This could save you ~{fR(saving)} in tax!</div>
+              </div>
+            )}
+            <div className="info-box">Tip: Repairs and services for your car are also deductible at your work-use %.</div>
+            <div className="btn-row">
+              <button className="btn btn-primary btn-sm" onClick={() => { dispatch({ type:'SET_TP_CAT', cat:'travel', payload:{ enabled: true, workPercentage: pct, monthlyFuel: fuel, monthlyInsurance: ins, hasLogbook: hasLog } }); onComplete(); }}>Save</button>
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (type === 'phone') {
+        const [pct, setPct] = useState(tp.phone.workPercentage || 60);
+        const [bill, setBill] = useState(tp.phone.monthlyBill || 0);
+        const monthlyDed = Math.round(bill * pct / 100);
+        const annualDed = monthlyDed * 12;
+        return (
+          <div className="card" style={{border:'1px solid rgba(224,106,66,.2)'}}>
+            <h3 style={{marginBottom:4}}>Phone Setup</h3>
+            <PctSlider label="What % of your phone is work use?" value={pct} onChange={setPct} min={10} max={90} />
+            <RandInput label="Monthly phone bill" value={bill} onChange={setBill} />
+            {annualDed > 0 && (
+              <div className="success-box">
+                <div className="lbl">Your deduction</div>
+                <div className="amount">{fR(monthlyDed)}/month = {fR(annualDed)}/year</div>
+              </div>
+            )}
+            <div className="btn-row">
+              <button className="btn btn-primary btn-sm" onClick={() => { dispatch({ type:'SET_TP_CAT', cat:'phone', payload:{ enabled: true, workPercentage: pct, monthlyBill: bill } }); onComplete(); }}>Save</button>
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (type === 'ra') {
+        const [hasRA, setHasRA] = useState(null);
+        const [monthly, setMonthly] = useState(tp.retirement.monthlyRA || 0);
+        const annual = monthly * 12;
+        const t = calcFullTax(state);
+        const maxMonthly = Math.round(Math.min(state.user.monthlyGross * 12 * 0.275, 350000) / 12);
+        const saving = Math.round(Math.min(annual, state.user.monthlyGross * 12 * 0.275, 350000) * t.marginal);
+        return (
+          <div className="card" style={{border:'1px solid rgba(224,106,66,.2)'}}>
+            <h3 style={{marginBottom:4}}>Retirement Annuity</h3>
+            <div className="field">
+              <label className="label">Do you contribute to an RA?</label>
+              <YesNo value={hasRA} onChange={setHasRA} />
+            </div>
+            {hasRA === false && (
+              <div className="info-box">No problem. An RA is one of the best tax-saving tools — you can deduct up to 27.5% of your income (capped at R350k/year). Something to consider!</div>
+            )}
+            {hasRA && (
+              <>
+                <RandInput label="Monthly contribution" value={monthly} onChange={setMonthly} />
+                {annual > 0 && (
+                  <div className="success-box">
+                    <div className="lbl">Your RA deduction</div>
+                    <div className="amount">{fR(monthly)}/month = {fR(annual)}/year</div>
+                    <div className="small mt12">This saves you ~{fR(saving)} in tax at your bracket!</div>
+                    {maxMonthly > monthly && <div className="small">Room for {fR(maxMonthly - monthly)} more per month.</div>}
+                  </div>
+                )}
+              </>
+            )}
+            <div className="btn-row">
+              {hasRA === true && <button className="btn btn-primary btn-sm" onClick={() => { dispatch({ type:'SET_TP_CAT', cat:'retirement', payload:{ enabled: true, monthlyRA: monthly } }); onComplete(); }}>Save</button>}
+              {hasRA === false && <button className="btn btn-primary btn-sm" onClick={onNotApplicable}>Done</button>}
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (type === 'medical') {
+        const [members, setMembers] = useState(tp.medical.members || 1);
+        const [deps, setDeps] = useState(tp.medical.dependents || 0);
+        const tables = getTaxTables(state.user.taxYear);
+        let monthlyCredits = tables.medCredits.main;
+        if (deps >= 1) monthlyCredits += tables.medCredits.first;
+        if (deps > 1) monthlyCredits += (deps - 1) * tables.medCredits.additional;
+        const annualCredits = monthlyCredits * 12;
+        return (
+          <div className="card" style={{border:'1px solid rgba(224,106,66,.2)'}}>
+            <h3 style={{marginBottom:4}}>Medical Aid Setup</h3>
+            <div className="field">
+              <label className="label">Main members</label>
+              <div className="toggle-row">
+                <button type="button" className={`toggle-btn ${members===1?'on':''}`} onClick={()=>setMembers(1)}>1</button>
+                <button type="button" className={`toggle-btn ${members===2?'on':''}`} onClick={()=>setMembers(2)}>2</button>
+              </div>
+            </div>
+            <div className="field">
+              <label className="label">Dependents</label>
+              <div className="toggle-row">
+                {[0,1,2,3].map(n => <button key={n} type="button" className={`toggle-btn ${deps===n?'on':''}`} onClick={()=>setDeps(n)}>{n}</button>)}
+              </div>
+            </div>
+            <div className="success-box">
+              <div className="lbl">Your medical tax credits</div>
+              <div className="amount">{fR(monthlyCredits)}/month = {fR(annualCredits)}/year</div>
+            </div>
+            <div className="btn-row">
+              <button className="btn btn-primary btn-sm" onClick={() => { dispatch({ type:'SET_TP_CAT', cat:'medical', payload:{ enabled: true, members, dependents: deps } }); onComplete(); }}>Save</button>
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          </div>
+        );
+      }
+
+      if (type === 'donations') {
+        const [hasPBO, setHasPBO] = useState(null);
+        const [annual, setAnnual] = useState(tp.donations.annualAmount || 0);
+        const capAmount = Math.round((state.user.monthlyGross * 12) * 0.10);
+        return (
+          <div className="card" style={{border:'1px solid rgba(224,106,66,.2)'}}>
+            <h3 style={{marginBottom:4}}>Donations Setup</h3>
+            <div className="field">
+              <label className="label">Do your charities provide Section 18A tax certificates?</label>
+              <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:8}}>
+                <button type="button" className={`toggle-btn ${hasPBO===true?'on':''}`} onClick={()=>setHasPBO(true)} style={{textAlign:'left',padding:'10px 14px'}}>Yes, they're registered PBOs</button>
+                <button type="button" className={`toggle-btn ${hasPBO===false?'on':''}`} onClick={()=>setHasPBO(false)} style={{textAlign:'left',padding:'10px 14px'}}>No / I'm not sure</button>
+              </div>
+            </div>
+            {hasPBO && (
+              <>
+                <RandInput label="Estimated annual donations" value={annual} onChange={setAnnual} />
+                <div className="info-box">Deductible up to {fR(capAmount)} (10% of your taxable income). Keep your Section 18A certificates as proof.</div>
+              </>
+            )}
+            {hasPBO === false && <div className="info-box">Without Section 18A certificates, donations can't be deducted. Ask your charity if they're a registered PBO.</div>}
+            <div className="btn-row">
+              {hasPBO === true && <button className="btn btn-primary btn-sm" onClick={() => { dispatch({ type:'SET_TP_CAT', cat:'donations', payload:{ enabled: true, annualAmount: annual } }); onComplete(); }}>Save</button>}
+              {hasPBO === false && <button className="btn btn-primary btn-sm" onClick={onNotApplicable}>Done</button>}
+              <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+            </div>
+          </div>
+        );
+      }
+
+      // Fallback
+      return null;
     }
 
     // ===== SCREEN: YOUR DETAILS =====
@@ -2185,6 +2590,20 @@
             </div>
           )}
 
+          {/* Profile completeness indicator for quick-start users */}
+          {state.user.quickStart && calcProfileCompleteness(state) < 100 && (
+            <div className="dash-card" style={{background:'rgba(224,106,66,.04)',border:'1px solid rgba(224,106,66,.12)'}}>
+              <div className="flex-between" style={{marginBottom:8}}>
+                <div className="dash-card-title" style={{margin:0}}>Tax profile: {calcProfileCompleteness(state)}% complete</div>
+              </div>
+              <div className="budget-bar" style={{height:8,marginBottom:8}}>
+                <div className="budget-fill" style={{width:`${calcProfileCompleteness(state)}%`,background:'linear-gradient(90deg, var(--coral-dark), var(--coral), var(--coral-light))',boxShadow:'0 0 8px rgba(224,106,66,.3)'}} />
+              </div>
+              <div className="small">Set up more deductions to improve your tax estimate.</div>
+              <button className="btn btn-sm btn-secondary mt12" onClick={() => navigate('edit-deductions-full')} style={{fontSize:'.8125rem'}}>Complete setup</button>
+            </div>
+          )}
+
           <div className="dash-card dash-card--hero">
             <div className="dash-card-title">Tax Deductions This Year</div>
             <div className="dash-amount">{fR(t.deductionsTotal)}</div>
@@ -2219,6 +2638,9 @@
 
           <div className="dash-card">
             <div className="dash-card-title">Your Tax Summary</div>
+            {state.user.quickStart && calcProfileCompleteness(state) < 75 && (
+              <div className="small mb8" style={{color:'var(--warning)'}}>Based on income only — set up deductions for a better estimate</div>
+            )}
             <div className="flex-between mb8">
               <span>Annual tax</span><span style={{fontWeight:600}}>{fR(t.netTax)}</span>
             </div>
@@ -2516,6 +2938,7 @@
       const [saved, setSaved] = useState(false);
       const [ocrUsed, setOcrUsed] = useState(false);
       const [ocrConfidence, setOcrConfidence] = useState(null);
+      const [contextualPrompt, setContextualPrompt] = useState(null);
 
       const handleOcrResult = (result) => {
         if (result.amount) setAmount(String(result.amount));
@@ -2546,6 +2969,16 @@
         dispatch({ type: 'ADD_EXPENSE', payload: expense });
         setSmartResponse(responses);
         setSaved(true);
+        // Check for contextual prompts (quick-start users)
+        const prompt = getContextualPrompt(expense, state);
+        if (prompt) {
+          // Increment relevant expense counter for "not now" prompts
+          const ph = (state.promptHistory || {})[prompt.key] || {};
+          if (ph.status === 'shown') {
+            dispatch({ type: 'SET_PROMPT', key: prompt.key, payload: { relevantExpensesSince: (ph.relevantExpensesSince || 0) + 1 } });
+          }
+          setContextualPrompt(prompt);
+        }
       };
 
       const handleAnother = () => {
@@ -2564,6 +2997,15 @@
                 {msg.text}
               </div>
             ))}
+            {contextualPrompt && (
+              <ContextualPromptCard
+                prompt={contextualPrompt}
+                state={state}
+                dispatch={dispatch}
+                navigate={navigate}
+                onDismiss={() => setContextualPrompt(null)}
+              />
+            )}
             <div className="btn-row mt24">
               <button className="btn btn-primary" onClick={handleAnother}>Log Another</button>
               <button className="btn btn-secondary" onClick={() => navigate('dashboard')}>Done</button>
@@ -2919,6 +3361,14 @@
         doc.setFontSize(10);
         doc.setTextColor(200, 120, 0);
         doc.text('\u26a0\ufe0f This tax year is still in progress. Figures may change.', 20, 120);
+        doc.setTextColor(0);
+      }
+
+      if (state.user.quickStart && calcProfileCompleteness(state) < 100) {
+        doc.setFontSize(9);
+        doc.setTextColor(200, 120, 0);
+        const profileNote = 'Tax profile partially complete (' + calcProfileCompleteness(state) + '%). Some deductions may not be reflected. Consider completing your profile for a more accurate report.';
+        doc.text(doc.splitTextToSize(profileNote, 170), 20, isIncomplete ? 130 : 120);
         doc.setTextColor(0);
       }
 
@@ -3447,6 +3897,28 @@
             <div className="tax-row"><span>Marginal rate</span><span>{fPct(t.marginal)}</span></div>
           </div>
 
+          {/* Missing deductions for quick-start users */}
+          {state.user.quickStart && calcProfileCompleteness(state) < 100 && (() => {
+            const tp2 = state.taxProfile;
+            const missing = [];
+            if (!tp2.homeOffice.enabled) missing.push('Home office');
+            if (!tp2.travel.enabled) missing.push('Vehicle expenses');
+            if (!tp2.phone.enabled) missing.push('Phone costs');
+            if (!tp2.retirement.enabled) missing.push('Retirement annuity');
+            if (!tp2.medical.enabled) missing.push('Medical aid');
+            if (!tp2.donations.enabled) missing.push('Donations');
+            if (missing.length === 0) return null;
+            return (
+              <div className="card mt24" style={{background:'rgba(251,191,36,.04)',border:'1px solid rgba(251,191,36,.12)'}}>
+                <div style={{fontWeight:600,marginBottom:6,fontSize:'.875rem'}}>You might also be able to claim:</div>
+                <div style={{fontSize:'.875rem',color:'var(--text2)'}}>
+                  {missing.join(', ')}
+                </div>
+                <button className="btn btn-sm btn-secondary mt12" onClick={() => navigate('edit-deductions-full')} style={{fontSize:'.8125rem'}}>Explore deductions</button>
+              </div>
+            );
+          })()}
+
           <button className="btn mt24" style={{background:'var(--primary)',color:'#fff'}} onClick={() => generatePDFReport(state)}><Icon name="file" size={16} style={{marginRight:4}} /> Generate PDF Report for {taxYear}</button>
           <button className="btn btn-secondary mt8" onClick={() => exportTaxSummary(state)} style={{fontSize:'.8125rem'}}><Icon name="pencil" size={16} style={{marginRight:4}} /> Text Summary (.txt)</button>
         </>
@@ -3501,6 +3973,12 @@
         <>
           <h2 style={{marginBottom:8}}>Tax Calculator</h2>
           <div className="small mb24">Interactive — change values to see the impact</div>
+
+          {state.user.quickStart && calcProfileCompleteness(state) < 75 && (
+            <div className="warn-box" style={{marginBottom:16}}>
+              Your tax estimate could be more accurate. <a href="#edit-deductions-full" style={{color:'var(--warning)',fontWeight:600}}>Complete your profile</a>
+            </div>
+          )}
 
           <RandInput label="Annual gross income" value={gross} onChange={setGross} />
           <div className="field">
@@ -4508,7 +4986,7 @@
       const [state, dispatch] = useReducer(reducer, INITIAL_STATE, loadState);
       const toast = useToast();
 
-      const onboardingScreens = ['welcome','details','income','deductions','tax-reveal','bridge','budget-setup'];
+      const onboardingScreens = ['welcome','quick-setup','details','income','deductions','tax-reveal','bridge','budget-setup'];
       const postScreens = ['dashboard','budget','log-expense','expenses','tax-summary','tax-calculator','provisional-tax','backpocket','settings','edit-details','edit-deductions','edit-deductions-full','budget-view','budget-setup','documents','import-data'];
 
       const getInitialScreen = () => {
@@ -4541,11 +5019,17 @@
         nav('dashboard');
       }, [nav]);
 
+      const finishQuickStart = useCallback(() => {
+        dispatch({ type: 'SET_USER', payload: { setupComplete: true, quickStart: true, profileCompleteness: 25 } });
+        nav('dashboard');
+      }, [nav]);
+
       const showNav = state.user.setupComplete && !onboardingScreens.includes(screen);
 
       const renderScreen = () => {
         switch (screen) {
-          case 'welcome': return <WelcomeScreen onNext={() => nav('details')} />;
+          case 'welcome': return <WelcomeScreen onGuided={() => nav('details')} onQuickStart={() => nav('quick-setup')} />;
+          case 'quick-setup': return <QuickSetupScreen state={state} dispatch={dispatch} onComplete={finishQuickStart} />;
           case 'details': return <DetailsScreen state={state} dispatch={dispatch} onNext={() => nav('income')} />;
           case 'income': return <IncomeScreen state={state} dispatch={dispatch} onNext={() => nav('deductions')} />;
           case 'deductions': return <DeductionsScreen state={state} dispatch={dispatch} onNext={() => nav('tax-reveal')} />;
