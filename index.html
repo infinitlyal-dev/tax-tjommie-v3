@@ -349,6 +349,56 @@
     @keyframes shimmer { 0% { background-position: -200% center; } 100% { background-position: 200% center; } }
     @keyframes glowPulse { 0%, 100% { box-shadow: 0 4px 16px rgba(224,106,66,.35); } 50% { box-shadow: 0 6px 24px rgba(224,106,66,.55); } }
     @keyframes subtleBreathe { 0%, 100% { opacity: .5; } 50% { opacity: .8; } }
+    /* ===== CINDERELLA LAYER 4: ENHANCED MICRO-INTERACTIONS ===== */
+    /* List item stagger for expense items */
+    .expense-item { animation: slideUp .35s cubic-bezier(.4,0,.2,1) both; }
+    .expense-item:nth-child(1) { animation-delay: 0s; }
+    .expense-item:nth-child(2) { animation-delay: .04s; }
+    .expense-item:nth-child(3) { animation-delay: .08s; }
+    .expense-item:nth-child(4) { animation-delay: .12s; }
+    .expense-item:nth-child(5) { animation-delay: .16s; }
+    .expense-item:nth-child(6) { animation-delay: .2s; }
+    .expense-item:nth-child(7) { animation-delay: .24s; }
+    .expense-item:nth-child(8) { animation-delay: .28s; }
+    .expense-item:nth-child(9) { animation-delay: .32s; }
+    .expense-item:nth-child(10) { animation-delay: .36s; }
+    /* Check item stagger */
+    .check-item { animation: slideUp .3s cubic-bezier(.4,0,.2,1) both; }
+    .check-list .check-item:nth-child(1) { animation-delay: 0s; }
+    .check-list .check-item:nth-child(2) { animation-delay: .04s; }
+    .check-list .check-item:nth-child(3) { animation-delay: .06s; }
+    .check-list .check-item:nth-child(4) { animation-delay: .08s; }
+    .check-list .check-item:nth-child(5) { animation-delay: .1s; }
+    .check-list .check-item:nth-child(6) { animation-delay: .12s; }
+    /* Success checkmark draw animation */
+    @keyframes drawCheck { 0% { stroke-dashoffset: 36; } 100% { stroke-dashoffset: 0; } }
+    @keyframes scaleIn { 0% { transform: scale(0); opacity: 0; } 50% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+    @keyframes celebratePulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.4); } 70% { box-shadow: 0 0 0 16px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+    .success-checkmark { animation: scaleIn .5s cubic-bezier(.4,0,.2,1) both; }
+    .success-checkmark path { stroke-dasharray: 36; stroke-dashoffset: 36; animation: drawCheck .4s cubic-bezier(.4,0,.2,1) .3s forwards; }
+    .success-celebrate { animation: celebratePulse .8s ease-out; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; background: rgba(52,211,153,.1); margin: 0 auto 16px; }
+    /* Skeleton loading shimmer */
+    .skeleton { background: linear-gradient(90deg, var(--surface) 25%, rgba(255,255,255,.06) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: var(--rs); }
+    .skeleton-line { height: 14px; margin-bottom: 8px; border-radius: 6px; }
+    .skeleton-line.short { width: 60%; }
+    .skeleton-line.medium { width: 80%; }
+    .skeleton-line.large { width: 100%; }
+    .skeleton-amount { height: 32px; width: 45%; border-radius: 8px; margin-bottom: 12px; }
+    /* Animated number tabular display */
+    .animated-number { font-variant-numeric: tabular-nums; }
+    /* Enhanced card hover with lift */
+    .dash-card:hover { transform: translateY(-2px); box-shadow: var(--depth-2), 0 0 20px rgba(0,0,0,.08); }
+    /* Welcome door enhanced hover */
+    .welcome-door { transition: all .25s cubic-bezier(.4,0,.2,1); }
+    .welcome-door:active { transform: scale(.97); }
+    /* Budget category card stagger */
+    .budget-cat-card { animation: slideUp .35s cubic-bezier(.4,0,.2,1) both; }
+    /* Toggle button enhanced interaction */
+    .toggle-btn:active { transform: scale(.96); }
+    .freq-btn { transition: all .15s ease; }
+    .freq-btn:active { transform: scale(.96); }
+    /* Filter chip enhanced interaction */
+    .filter-chip:active { transform: scale(.95); }
   </style>
 </head>
 <body>
@@ -1052,6 +1102,53 @@
       );
     }
 
+    // ===== CINDERELLA: ANIMATED NUMBER COUNTER =====
+    function AnimatedNumber({ value, prefix = 'R', duration = 600, className = '', style = {} }) {
+      const [display, setDisplay] = React.useState(0);
+      const prevRef = React.useRef(0);
+      const frameRef = React.useRef(null);
+      React.useEffect(() => {
+        const start = prevRef.current;
+        const end = Math.round(value || 0);
+        if (start === end) return;
+        const startTime = performance.now();
+        const animate = (now) => {
+          const elapsed = now - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          // Ease-out cubic
+          const eased = 1 - Math.pow(1 - progress, 3);
+          const current = Math.round(start + (end - start) * eased);
+          setDisplay(current);
+          if (progress < 1) frameRef.current = requestAnimationFrame(animate);
+          else prevRef.current = end;
+        };
+        frameRef.current = requestAnimationFrame(animate);
+        return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
+      }, [value, duration]);
+      return <span className={`animated-number ${className}`} style={style}>{prefix}{display.toLocaleString('en-ZA')}</span>;
+    }
+
+    // ===== CINDERELLA: SUCCESS CHECKMARK =====
+    function SuccessCheckmark({ size = 48 }) {
+      return (
+        <div className="success-celebrate">
+          <svg className="success-checkmark" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#34D399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+        </div>
+      );
+    }
+
+    // ===== CINDERELLA: HAPTIC FEEDBACK =====
+    function haptic(type = 'light') {
+      try {
+        if (!navigator.vibrate) return;
+        if (type === 'light') navigator.vibrate(8);
+        else if (type === 'medium') navigator.vibrate(15);
+        else if (type === 'success') navigator.vibrate([8, 40, 8]);
+      } catch {}
+    }
+
     function BackButton({ onClick, label = 'Back' }) {
       return <button className="btn btn-ghost btn-sm" onClick={onClick} aria-label={label} style={{padding:'8px 12px',minWidth:44,minHeight:44,display:'inline-flex',alignItems:'center',justifyContent:'center'}}><Icon name="arrowLeft" size={22} /></button>;
     }
@@ -1110,7 +1207,7 @@
           </div>
           <h1>Tax Tjommie</h1>
           <div className="tagline">Your pocket tax companion</div>
-          <p className="subtitle">Built for self-employed South Africans. Track expenses, maximise deductions, know your tax position — all year round.</p>
+          <p className="subtitle">Track expenses, maximise deductions, and know your tax position — built for self-employed South Africans.</p>
           <div className="welcome-doors">
             <button className="welcome-door" onClick={onGuided}>
               <span className="welcome-door-icon">&#128203;</span>
@@ -1157,7 +1254,7 @@
               ))}
             </div>
           </div>
-          <button className="btn btn-primary mt24" disabled={!canSubmit} onClick={onComplete}>Start logging</button>
+          <button className="btn btn-primary mt24" disabled={!canSubmit} onClick={() => { haptic('medium'); onComplete(); }}>Let's go</button>
         </div>
       );
     }
@@ -1194,7 +1291,7 @@
               <option value="2024/25">2024/25 (last year)</option>
             </select>
           </div>
-          <button className="btn btn-primary mt24" disabled={!canNext} style={{opacity: canNext ? 1 : 0.5}} onClick={onNext}>Next</button>
+          <button className="btn btn-primary mt24" disabled={!canNext} style={{opacity: canNext ? 1 : 0.5}} onClick={() => { haptic('light'); onNext(); }}>Got it, next</button>
         </div>
       );
     }
@@ -1714,8 +1811,8 @@
           </div>
           <div className="success-box" style={{marginBottom:16}}>
             <div style={{fontSize:'.8125rem',color:'var(--text2)'}}>Total annual deductions</div>
-            <div style={{fontSize:'1.375rem',fontWeight:700,color:'var(--success)'}}>{fR(t.deductionsTotal)}</div>
-            <div className="small">{enabledCount} of {DEDUCTION_STEPS.length} categories active · Saving ~{fR(t.savings)}/year</div>
+            <div style={{fontSize:'1.375rem',fontWeight:700,color:'var(--success)'}}><AnimatedNumber value={t.deductionsTotal} duration={800} /></div>
+            <div className="small">{enabledCount} of {DEDUCTION_STEPS.length} categories active · Saving ~<AnimatedNumber value={t.savings} duration={900} />/year</div>
           </div>
 
           {summaryItems.map(item => (
@@ -1784,8 +1881,8 @@
           )}
           <div className="btn-row mt24">
             {step > 0 && <button className="btn btn-secondary" onClick={() => setStep(s => s - 1)}>Back</button>}
-            <button className="btn btn-primary" onClick={() => step < DEDUCTION_STEPS.length - 1 ? setStep(s => s + 1) : onNext()}>
-              {step < DEDUCTION_STEPS.length - 1 ? 'Next Category' : 'See Your Tax Position \u2192'}
+            <button className="btn btn-primary" onClick={() => { haptic('light'); step < DEDUCTION_STEPS.length - 1 ? setStep(s => s + 1) : onNext(); }}>
+              {step < DEDUCTION_STEPS.length - 1 ? 'Next category' : 'Show me my tax savings'}
             </button>
           </div>
         </div>
@@ -1830,10 +1927,10 @@
             <div className="tax-row"><span>Per month</span><span>{fR(t.netTax / 12)}</span></div>
             <div className="tax-divider" />
             <div className="tax-row"><span>Without deductions you'd pay</span><span>{fR(t.taxWithout)}</span></div>
-            <div className="tax-row big"><span>YOUR DEDUCTIONS SAVE YOU</span><span>{fR(t.savings)} <Icon name="sparkle" size={16} style={{marginLeft:4}} /></span></div>
+            <div className="tax-row big"><span>YOUR DEDUCTIONS SAVE YOU</span><span><AnimatedNumber value={t.savings} duration={1000} /> <Icon name="sparkle" size={16} style={{marginLeft:4}} /></span></div>
           </div>
           <div className="small center mt12">This is an estimate. Your tax practitioner will confirm the final amount.</div>
-          <button className="btn btn-primary mt24" onClick={onNext}>See what's left for your budget &rarr;</button>
+          <button className="btn btn-primary mt24" onClick={() => { haptic('success'); onNext(); }}>See what's left for living</button>
         </div>
       );
     }
@@ -1859,9 +1956,9 @@
             <div className="tax-divider" />
             <div className="tax-row highlight"><span>AVAILABLE FOR LIVING</span><span>{fR(available)}</span></div>
           </div>
-          <p className="subtitle center mt24">Now let's plan how to spend this wisely.</p>
-          <button className="btn btn-primary mt24" onClick={onBudget}>Set up my budget now</button>
-          <button className="btn btn-ghost mt12" onClick={onSkip}>I'll do this later</button>
+          <p className="subtitle center mt24">Now let's make every rand count.</p>
+          <button className="btn btn-primary mt24" onClick={() => { haptic('medium'); onBudget(); }}>Plan my budget</button>
+          <button className="btn btn-ghost mt12" onClick={onSkip}>Skip for now</button>
         </div>
       );
     }
@@ -1905,7 +2002,7 @@
             {remaining > 0 && <div className="small mt12">{fR(remaining)} unallocated — consider savings or your Backpocket</div>}
             {remaining < 0 && <div className="small mt12" style={{color:'var(--danger-text)'}}>Over budget by {fR(Math.abs(remaining))}</div>}
           </div>
-          <button className="btn btn-primary mt24" onClick={onComplete}>Save Budget</button>
+          <button className="btn btn-primary mt24" onClick={() => { haptic('success'); onComplete(); }}>Lock in my budget</button>
         </div>
       );
     }
@@ -1952,10 +2049,10 @@
         return (
           <div className="screen" style={{textAlign:'center',paddingTop:60}}>
             <div style={{marginBottom:16}}><Icon name="money" size={40} style={{color:'var(--coral)',marginBottom:16}} /></div>
-            <h2>No budget set up yet</h2>
-            <p className="subtitle mt12">Create a budget to track your monthly spending against your available income.</p>
-            <button className="btn btn-primary mt24" onClick={() => navigate('budget-setup')}>Set Up Budget</button>
-            <button className="btn btn-ghost mt12" onClick={() => navigate('expenses')}>View Expenses Instead</button>
+            <h2>Let's plan your money</h2>
+            <p className="subtitle mt12">Set up a budget to see where your rands are going each month.</p>
+            <button className="btn btn-primary mt24" onClick={() => { haptic('medium'); navigate('budget-setup'); }}>Create my budget</button>
+            <button className="btn btn-ghost mt12" onClick={() => navigate('expenses')}>Just show me expenses</button>
           </div>
         );
       }
@@ -1973,7 +2070,7 @@
             <div className="flex-between mb8">
               <div>
                 <div className="small">This month</div>
-                <div style={{fontSize:'1.5rem',fontWeight:700}}>{fR(monthSpent)} <span style={{fontSize:'.875rem',fontWeight:400,color:'var(--text2)'}}>of {fR(budgetTotal)}</span></div>
+                <div style={{fontSize:'1.5rem',fontWeight:700}}><AnimatedNumber value={monthSpent} duration={600} /> <span style={{fontSize:'.875rem',fontWeight:400,color:'var(--text2)'}}>of {fR(budgetTotal)}</span></div>
               </div>
               <div style={{textAlign:'right'}}>
                 <span className={`tag ${monthSpent/budgetTotal < 0.75 ? 'tag-green' : monthSpent/budgetTotal < 0.9 ? 'tag-amber' : 'tag-red'}`}>
@@ -2215,7 +2312,7 @@
         <div className="screen" style={{paddingBottom:120}}>
           <div className="dash-hero">
             <TaxYearSelector state={state} dispatch={dispatch} />
-            <div className="dash-greeting">Welcome back,</div>
+            <div className="dash-greeting">{(() => { const h = new Date().getHours(); return h < 12 ? 'Good morning,' : h < 17 ? 'Good afternoon,' : 'Good evening,'; })()}</div>
             <div className="dash-name">{state.user.name || 'Friend'}</div>
           </div>
           <div className="dash-body">
@@ -2247,8 +2344,8 @@
 
           <div className="dash-card dash-card--hero">
             <div className="dash-card-title">Tax Deductions This Year</div>
-            <div className="dash-amount">{fR(t.deductionsTotal)}</div>
-            <div className="dash-sub">Saving you approximately {fR(t.savings)} in tax</div>
+            <div className="dash-amount"><AnimatedNumber value={t.deductionsTotal} duration={800} /></div>
+            <div className="dash-sub">Saving you ~<AnimatedNumber value={t.savings} duration={900} /> in tax</div>
             {t.deductionsTotal > 0 && (
               <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:12}}>
                 {t.breakdown.homeOffice > 0 && <span className="tag tag-green">Home {fR(t.breakdown.homeOffice)}</span>}
@@ -2280,10 +2377,10 @@
           <div className="dash-card">
             <div className="dash-card-title">Your Tax Summary</div>
             <div className="flex-between mb8">
-              <span>Annual tax</span><span style={{fontWeight:600}}>{fR(t.netTax)}</span>
+              <span>Annual tax</span><span style={{fontWeight:600}}><AnimatedNumber value={t.netTax} duration={700} /></span>
             </div>
             <div className="flex-between mb8">
-              <span>Monthly tax</span><span style={{fontWeight:600}}>{fR(t.netTax/12)}</span>
+              <span>Monthly tax</span><span style={{fontWeight:600}}><AnimatedNumber value={Math.round(t.netTax/12)} duration={700} /></span>
             </div>
             <div className="flex-between">
               <span>Effective rate</span><span style={{fontWeight:600}}>{t.gross > 0 ? Math.round((t.netTax/t.gross)*100) : 0}%</span>
@@ -2304,9 +2401,9 @@
               ))}
             </div>
           ) : (
-            <div className="nudge">
+            <div className="nudge" style={{cursor:'pointer'}} onClick={() => navigate('log')}>
               <span className="nudge-icon"><Icon name="pencil" size={18} /></span>
-              <span>No expenses logged yet. Tap the + button to start tracking!</span>
+              <span>No expenses yet — tap here to log your first one and start saving on tax.</span>
             </div>
           )}
 
@@ -2617,7 +2714,10 @@
       if (saved && smartResponse) {
         return (
           <div className="screen">
-            <h2 style={{textAlign:'center',marginBottom:24}}>Expense Logged</h2>
+            <div style={{textAlign:'center',marginBottom:8}}>
+              <SuccessCheckmark size={40} />
+            </div>
+            <h2 style={{textAlign:'center',marginBottom:24}}>Logged!</h2>
             {smartResponse.map((msg, i) => (
               <div key={i} className={`smart-response ${msg.type}`}>
                 <span className="sr-icon">{msg.type === 'success' ? '\u2705' : '\u26A0\uFE0F'}</span>
@@ -2625,8 +2725,8 @@
               </div>
             ))}
             <div className="btn-row mt24">
-              <button className="btn btn-primary" onClick={handleAnother}>Log Another</button>
-              <button className="btn btn-secondary" onClick={() => navigate('dashboard')}>Done</button>
+              <button className="btn btn-primary" onClick={() => { haptic('light'); handleAnother(); }}>Log another</button>
+              <button className="btn btn-secondary" onClick={() => navigate('dashboard')}>Back to dashboard</button>
             </div>
           </div>
         );
@@ -2693,7 +2793,7 @@
             <label htmlFor="receipt-check" style={{fontSize:'.9375rem'}}>I have a receipt</label>
           </div>
           {!hasReceipt && isWork && <div className="small" style={{color:'var(--danger-text)',marginBottom:12}}><strong>No receipt — SARS can disallow this deduction entirely.</strong> Keep all receipts for at least 5 years.</div>}
-          <button className="btn btn-primary mt24" disabled={!canSave} style={{opacity: canSave ? 1 : 0.5}} onClick={handleSave}>Save Expense</button>
+          <button className="btn btn-primary mt24" disabled={!canSave} style={{opacity: canSave ? 1 : 0.5}} onClick={() => { haptic('success'); handleSave(); }}>Log this expense</button>
         </div>
       );
     }
@@ -2768,7 +2868,7 @@
             <input type="checkbox" id="edit-receipt-check" checked={hasReceipt} onChange={e => setHasReceipt(e.target.checked)} />
             <label htmlFor="edit-receipt-check" style={{fontSize:'.9375rem'}}>I have a receipt</label>
           </div>
-          <button className="btn btn-primary mt24" onClick={handleSave}>Save Changes</button>
+          <button className="btn btn-primary mt24" onClick={() => { haptic('success'); handleSave(); }}>Save changes</button>
         </div>
       );
     }
@@ -2853,8 +2953,8 @@
           }) : (
             <div className="expense-empty">
               <div className="empty-icon"><Icon name="pencil" size={40} style={{color:'var(--text3)',marginBottom:12}} /></div>
-              <p>No expenses yet</p>
-              <p className="small mt12">Tap + to start tracking</p>
+              <p>Nothing here yet</p>
+              <p className="small mt12">Your expenses will appear here as you log them.</p>
             </div>
           )}
         </div>
@@ -3812,8 +3912,8 @@
           <div className="screen" style={{textAlign:'center',paddingTop:60}}>
             <div style={{marginBottom:16}}><Icon name="target" size={40} style={{color:'var(--coral)',marginBottom:16}} /></div>
             <h2>Backpocket Goals</h2>
-            <p className="subtitle mt12">Save toward things that matter. Set a goal, log savings each month, and watch your progress grow.</p>
-            <button className="btn btn-primary mt24" onClick={() => setShowAdd(true)}>Create Your First Goal</button>
+            <p className="subtitle mt12">Save toward the things that matter. Set a target, stash your surplus, and watch it grow.</p>
+            <button className="btn btn-primary mt24" onClick={() => { haptic('medium'); setShowAdd(true); }}>Start my first goal</button>
           </div>
         );
       }
@@ -4458,16 +4558,16 @@
             <div className="small" style={{marginTop:4,color:'var(--text3)'}}>{expCount} expenses logged · {goalCount} savings goal{goalCount !== 1 ? 's' : ''}</div>
           </div>
 
-          <h3 style={{marginTop:20,marginBottom:12}}>Edit Your Profile</h3>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('edit-details')}><Icon name="pencil" size={16} style={{marginRight:4}} /> Personal Details &amp; Income</button>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('edit-deductions')}><Icon name="receipt" size={16} style={{marginRight:4}} /> Tax Deductions</button>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('budget-setup')}><Icon name="wallet" size={16} style={{marginRight:4}} /> Budget Categories</button>
+          <h3 style={{marginTop:20,marginBottom:12}}>Your Profile</h3>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('edit-details')}><Icon name="pencil" size={16} style={{marginRight:4}} /> Personal details & income</button>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('edit-deductions')}><Icon name="receipt" size={16} style={{marginRight:4}} /> Manage deductions</button>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('budget-setup')}><Icon name="wallet" size={16} style={{marginRight:4}} /> Budget categories</button>
 
-          <h3 style={{marginTop:20,marginBottom:12}}>Quick Links</h3>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('tax-summary')}><Icon name="file" size={16} style={{marginRight:4}} /> Tax Summary &amp; Calculator</button>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('provisional-tax')}><Icon name="building" size={16} style={{marginRight:4}} /> Provisional Tax</button>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('backpocket')}><Icon name="target" size={16} style={{marginRight:4}} /> Backpocket Savings Goals</button>
-          <button className="btn btn-secondary mb8" onClick={() => navigate('expenses')}><Icon name="clipboard" size={16} style={{marginRight:4}} /> All Expenses</button>
+          <h3 style={{marginTop:20,marginBottom:12}}>Explore</h3>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('tax-summary')}><Icon name="file" size={16} style={{marginRight:4}} /> Tax summary & calculator</button>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('provisional-tax')}><Icon name="building" size={16} style={{marginRight:4}} /> Provisional tax</button>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('backpocket')}><Icon name="target" size={16} style={{marginRight:4}} /> Backpocket savings</button>
+          <button className="btn btn-secondary mb8" onClick={() => navigate('expenses')}><Icon name="clipboard" size={16} style={{marginRight:4}} /> All expenses</button>
           <button className="btn btn-secondary mb8" onClick={() => navigate('documents')}><Icon name="folder" size={16} style={{marginRight:4}} /> Documents ({(state.documents || []).length})</button>
 
           <h3 style={{marginTop:20,marginBottom:12}}>Reports</h3>
@@ -4558,7 +4658,7 @@
             <button type="button" className={`toggle-btn ${incomeMode==='annual'?'on':''}`} onClick={()=>setIncomeMode('annual')}>Annual</button>
           </div>
           <RandInput label={incomeMode === 'monthly' ? "Monthly gross income" : "Annual gross income"} value={incomeMode === 'monthly' ? monthly : annual} onChange={handleIncomeChange} />
-          <button className="btn btn-primary mt24" onClick={() => navigate('settings')}>Save Changes</button>
+          <button className="btn btn-primary mt24" onClick={() => { haptic('success'); navigate('settings'); }}>Save changes</button>
         </div>
       );
     }
