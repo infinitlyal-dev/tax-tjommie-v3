@@ -1,0 +1,6 @@
+archive/
+scripts/
+.playwright-cli/
+.claude/
+*.md
+!README.md

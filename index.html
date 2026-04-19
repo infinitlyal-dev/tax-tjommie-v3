@@ -681,9 +681,145 @@
     const { useState, useEffect, useReducer, useCallback, useMemo, useRef } = React;
 
     /* ===== CONSTANTS ===== */
-    const STORAGE_KEY = 'tax_tjommie_v4';
-    const LEGACY_KEY  = 'tax_tjommie_v3';
-    const APP_VERSION = '4.0.0';
+    const STORAGE_KEY  = 'tax_tjommie_v5';
+    const LEGACY_KEY_V4 = 'tax_tjommie_v4';
+    const LEGACY_KEY_V3 = 'tax_tjommie_v3';
+    const APP_VERSION  = '5.0.0';
+
+    /* ===== USER TYPES (spec §2 — five types) ===== */
+    const USER_TYPES = [
+      { id: 'salaried',       name: 'Salaried employee',       tagline: 'I get a payslip every month',         emoji: '💼' },
+      { id: 'salaried_side',  name: 'Salaried + side income',  tagline: 'Main salary, plus freelance work',    emoji: '🔄' },
+      { id: 'freelancer',     name: 'Freelancer / sole prop',  tagline: 'I work for myself',                   emoji: '⚡' },
+      { id: 'small_business', name: 'Small business',          tagline: 'I own a company with employees',      emoji: '🏢' },
+      { id: 'retired',        name: 'Retired / pensioner',     tagline: 'I receive a pension',                 emoji: '🌴' },
+    ];
+
+    /* User types that should see the Provisional tab and full sole-prop deduction set */
+    const PROV_TAXPAYER_TYPES = new Set(['freelancer', 'salaried_side', 'small_business']);
+    /* User types that get the full 11-category deduction manager */
+    const FULL_DEDUCTION_TYPES = new Set(['freelancer', 'small_business']);
+
+    /* ===== CAREER PROFILES (spec §4 Screen 4 — occupation follow-up) =====
+       Keyword lists match user occupation input (case-insensitive substring).
+       When matched, we show a preview of deductions and seed the AI with occupation context. */
+    const CAREER_PROFILES = {
+      creative: {
+        name: 'Creative',
+        keywords: ['photograph', 'design', 'video', 'artist', 'writ', 'music', 'illustrat', 'animat', 'film', 'director', 'producer', 'editor'],
+        deductions: [
+          'Camera equipment, lenses, lighting',
+          'Editing software (Photoshop, Lightroom, DaVinci)',
+          'Memory cards, hard drives, cloud storage',
+          'Website hosting, portfolio platforms',
+          'Props, model releases',
+        ],
+      },
+      teacher: {
+        name: 'Teacher',
+        keywords: ['teacher', 'tutor', 'lecturer', 'trainer', 'educator', 'coach'],
+        deductions: [
+          'Books, teaching materials, supplies',
+          'Online courses & professional development',
+          'SACE registration fees',
+          'Classroom equipment you paid for personally',
+        ],
+      },
+      medical: {
+        name: 'Medical professional',
+        keywords: ['doctor', 'dentist', 'nurse', 'therapist', 'psychologist', 'pharmacist', 'physio', 'chiroprac', 'gp', 'medical'],
+        deductions: [
+          'HPCSA registration, professional body fees',
+          'Indemnity insurance',
+          'Continuing professional development',
+          'Medical equipment, tools, consumables',
+          'Stethoscopes, scrubs, PPE',
+        ],
+      },
+      sales: {
+        name: 'Sales professional',
+        keywords: ['sales', 'agent', 'broker', 'commission', 'account manager', 'bdm', 'rep'],
+        deductions: [
+          'Vehicle & travel (often deductible based on logbook)',
+          'Phone & data for client calls',
+          'Client entertainment (with who/why)',
+          'Marketing materials, branded swag',
+        ],
+      },
+      it: {
+        name: 'IT / tech',
+        keywords: ['develop', 'programmer', 'engineer', 'devops', 'data ', 'software', 'tech ', 'it ', 'sysadmin', 'full stack', 'frontend', 'backend', 'ux'],
+        deductions: [
+          'Laptops, monitors, keyboards',
+          'Software subscriptions (GitHub, Figma, cloud services)',
+          'Home office setup',
+          'Conferences, online courses',
+        ],
+      },
+      legal_finance: {
+        name: 'Legal / finance',
+        keywords: ['lawyer', 'attorney', 'accountant', 'auditor', 'advisor', 'actuary', 'cfo', 'financial'],
+        deductions: [
+          'Bar Council / SAICA / professional body fees',
+          'Indemnity insurance',
+          'Research subscriptions (LexisNexis etc.)',
+          'Continuing legal/financial education',
+        ],
+      },
+      trades: {
+        name: 'Tradesperson',
+        keywords: ['electric', 'plumb', 'mechanic', 'technician', 'builder', 'carpent', 'painter', 'contractor', 'roofer', 'welder'],
+        deductions: [
+          'Tools, PPE, safety equipment',
+          'Vehicle (usually work-essential)',
+          'Materials bought personally',
+          'Trade-specific training & certifications',
+        ],
+      },
+      property: {
+        name: 'Property / real estate',
+        keywords: ['landlord', 'property invest', 'real estate', 'estate agent', 'realtor', 'property manager'],
+        deductions: [
+          'Mortgage interest on investment properties',
+          'Rates, levies, maintenance on rentals',
+          'Property management fees',
+          'Travel to inspect properties',
+          'Agent commissions, advertising costs',
+        ],
+      },
+      consulting: {
+        name: 'Consultant / coach',
+        keywords: ['consult', 'strategist', 'coach', 'adviser', 'advisor'],
+        deductions: [
+          'Home office',
+          'Travel to clients',
+          'Professional development, certifications',
+          'Indemnity insurance',
+          'Marketing (LinkedIn, speaking, website)',
+        ],
+      },
+      // "general" is the fallback — not keyword-matched, returned if nothing else fits and occupation is non-empty
+      general: {
+        name: 'Professional',
+        keywords: [],
+        deductions: [
+          'Home office (if you work from home)',
+          'Phone & internet (work portion)',
+          'Vehicle & travel (with logbook)',
+          'Professional fees, software, training',
+        ],
+      },
+    };
+
+    function matchCareerProfile(occupation) {
+      const s = (occupation || '').toLowerCase().trim();
+      if (!s) return null;
+      for (const [key, profile] of Object.entries(CAREER_PROFILES)) {
+        if (key === 'general') continue;
+        if (profile.keywords.some(kw => s.includes(kw))) return { key, ...profile };
+      }
+      return null; // Screen 4 is skipped if no match — spec says bland is worse than nothing
+    }
 
     /* ===== TAX TABLES (preserve v3 exactly — see PRESERVATION_LIST §1.1) ===== */
     const TAX_TABLES = {
@@ -767,6 +903,10 @@
         const year = userData.user?.taxYear || '2025/26';
         const annualIncome = (userData.user?.monthlyGross || 0) * 12;
         const tp = userData.taxProfile || {};
+        // v5: retired users get secondary/tertiary rebates automatically if age not set
+        // (spec §6.5: "Secondary rebate and tertiary rebate (age 65+, 75+) applied automatically")
+        const effectiveAge = userData.user?.age ||
+          (userData.user?.userType === 'retired' ? 67 : 35);
 
         // Home Office
         const ho = tp.homeOffice || {};
@@ -831,7 +971,7 @@
         const totalDeductions = homeOfficeAnnual + travelAnnual + phoneAnnual + equipAnnual + profAnnual + mkAnnual + raAnnual + donationAnnual + bdAnnual + blAnnual + txnDeductible;
         const taxableIncome = Math.max(0, annualIncome - totalDeductions);
         const taxBeforeRebate = Tax.calc(taxableIncome, year);
-        const rebate = Tax.primaryRebate(year, userData.user?.age || 35);
+        const rebate = Tax.primaryRebate(year, effectiveAge);
         const taxAfterRebate = Math.max(0, taxBeforeRebate - rebate);
         const netTax = Math.max(0, taxAfterRebate - medCreditAnnual - Tax.medOOP(tp.medical?.oopAmount, taxableIncome));
 
@@ -982,6 +1122,23 @@
 
     const uid = (prefix = 'id') => `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 
+    /** Shorten a filename to ≤14 chars for the Review screen tab labels. */
+    function shortenFileName(name) {
+      if (!name) return 'Unknown';
+      const base = name.replace(/\.(csv|pdf|png|jpe?g|webp|heic)$/i, '');
+      // Extract a meaningful label — e.g. "FNB Cheque March 2026.pdf" → "Cheque"
+      if (/cheque|current/i.test(base)) return 'Cheque';
+      if (/credit|cc\b/i.test(base))    return 'Credit';
+      if (/savings/i.test(base))        return 'Savings';
+      if (/receipt|slip/i.test(base))   return 'Receipt';
+      return base.slice(0, 14);
+    }
+
+    /** Singular/plural helper — fixes "1 expenses logged" → "1 expense logged" */
+    function plural(n, singular, p) {
+      return `${n} ${n === 1 ? singular : (p || singular + 's')}`;
+    }
+
     const greeting = () => {
       const h = new Date().getHours();
       if (h < 12) return 'Good morning';
@@ -996,8 +1153,9 @@
         email: '',
         age: 35,
         taxYear: '2025/26',
-        userType: 'individual',
-        monthlyGross: 0,
+        userType: 'freelancer',  // spec default until user picks (Screen 2 sets it)
+        occupation: '',           // NEW in v5 — drives AI context + career-profile prompts
+        monthlyGross: 0,          // no longer asked in onboarding; inferred from statements or set in Settings
         onboardingComplete: false,
         version: APP_VERSION,
         createdAt: new Date().toISOString(),
@@ -1018,8 +1176,12 @@
       accounts: [
         { id: 'acc_main', label: 'Main account', type: 'personal', lastImport: null, transactionCount: 0 },
       ],
-      transactions: [],
-      budget: { categories: {}, month: new Date().toISOString().slice(0,7) },
+      transactions: [],   // each txn now has sourceFile, receiptId, subcategoryBreakdown (optional)
+      budget: {
+        categories: {},
+        subcategorySpend: {},     // NEW v5: { groceries: { meat: 340, dairy: 185, ... } }
+        month: new Date().toISOString().slice(0,7),
+      },
       backpocket: [],
       provTaxPaid: { '2025/26': { firstPayment: 0, secondPayment: 0, voluntaryThirdPayment: 0 } },
       documents: [],
@@ -1029,6 +1191,11 @@
         reminderTime: '19:00',
         isPremium: false,
         hasSeenOnboarding: false,
+        hasSeenPrivacyModal: false,  // NEW v5: shown on first upload, must dismiss with "I understand"
+        skipAiProcessing: false,      // NEW v5: privacy toggle — fall back to keyword rules
+        cloudBackupProvider: null,    // NEW v5: 'google_drive' | 'icloud' | null
+        cloudBackupEnabled: false,
+        lastBackup: null,
         lastExport: null,
         lastImport: null,
       },
@@ -1036,21 +1203,85 @@
 
     function loadState() {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          return { ...emptyState(), ...parsed };
+        // Already on v5?
+        const rawV5 = localStorage.getItem(STORAGE_KEY);
+        if (rawV5) {
+          const parsed = JSON.parse(rawV5);
+          // Defensive merge with default shape so new v5 fields fill in on partial state.
+          return deepMerge(emptyState(), parsed);
         }
-        // Try v3 migration
-        const v3raw = localStorage.getItem(LEGACY_KEY);
-        if (v3raw) {
-          const v3 = JSON.parse(v3raw);
-          return migrateFromV3(v3);
+        // Migrate from v4 → v5 if present
+        const rawV4 = localStorage.getItem(LEGACY_KEY_V4);
+        if (rawV4) {
+          const v4 = JSON.parse(rawV4);
+          const migrated = migrateFromV4(v4);
+          return { ...migrated, _migrated: true, _migratedFrom: 'v4' };
+        }
+        // Or v3 → v5 via v4 shape
+        const rawV3 = localStorage.getItem(LEGACY_KEY_V3);
+        if (rawV3) {
+          const v3 = JSON.parse(rawV3);
+          const asV4 = migrateFromV3(v3);
+          const asV5 = migrateFromV4(asV4);
+          return { ...asV5, _migrated: true, _migratedFrom: 'v3' };
         }
       } catch (e) {
         console.warn('loadState failed', e);
       }
       return emptyState();
+    }
+
+    function deepMerge(target, source) {
+      const out = { ...target };
+      for (const key of Object.keys(source || {})) {
+        const tv = target[key];
+        const sv = source[key];
+        if (sv && typeof sv === 'object' && !Array.isArray(sv) && tv && typeof tv === 'object' && !Array.isArray(tv)) {
+          out[key] = deepMerge(tv, sv);
+        } else {
+          out[key] = sv;
+        }
+      }
+      return out;
+    }
+
+    /* v4 → v5 migration (AI_AND_PRIVACY.md §4 + spec §10) */
+    function migrateFromV4(v4) {
+      const base = emptyState();
+      const next = deepMerge(base, v4 || {});
+      // User: map old userType → v5 5-type set, add occupation default
+      const prevUserType = v4?.user?.userType;
+      const mapType = {
+        individual: 'salaried',          // v4 individuals were mostly salaried
+        sole_prop:  'freelancer',
+        sme:        'small_business',
+      };
+      next.user = {
+        ...base.user,
+        ...(v4?.user || {}),
+        userType:   mapType[prevUserType] || prevUserType || 'freelancer',
+        occupation: v4?.user?.occupation || '',
+        version:    APP_VERSION,
+      };
+      // Transactions: add v5 fields with safe defaults
+      next.transactions = (v4?.transactions || []).map(t => ({
+        sourceFile: null,
+        receiptId: null,
+        subcategoryBreakdown: null,
+        ...t,
+      }));
+      // Budget: ensure subcategorySpend exists
+      next.budget = {
+        ...base.budget,
+        ...(v4?.budget || {}),
+        subcategorySpend: v4?.budget?.subcategorySpend || {},
+      };
+      // Settings: fold in new privacy/backup defaults
+      next.settings = {
+        ...base.settings,
+        ...(v4?.settings || {}),
+      };
+      return next;
     }
 
     function migrateFromV3(v3) {
@@ -1132,30 +1363,56 @@
       }, 300);
     }
 
-    /* ===== AI PIPELINE — client-side sanitisation ===== */
-    const ACCOUNT_NUM_RX = /\b\d{10,}\b/g;
-    const LONG_REF_RX    = /\b[A-Z0-9]{12,}\b/gi;
+    /* ===== AI PIPELINE — client-side sanitisation (AI_AND_PRIVACY.md §2.2) ===== */
+    /** Strip PII from a transaction description. Server re-applies this; belt and braces. */
+    function sanitiseDescription(description) {
+      return String(description || '')
+        .replace(/\b\d{10,}\b/g, '[REF]')                          // account numbers ≥10 digits
+        .replace(/\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/g, '[CARD]')  // 16-digit card
+        .replace(/\b[A-Z0-9]{12,}\b/gi, '[REF]')                   // long alphanumeric refs
+        .replace(/\b\d{13}\b/g, '[ID]')                            // SA ID number
+        .replace(/\b0\d{9}\b/g, '[PHONE]')                         // SA phone
+        .slice(0, 200);
+    }
 
     function sanitiseRow(row) {
-      // Allow only { date, description, amount }
-      const description = String(row.description || '')
-        .replace(ACCOUNT_NUM_RX, '[REF]')
-        .replace(LONG_REF_RX, '[REF]')
-        .slice(0, 120);
       return {
         date: row.date ? String(row.date).slice(0, 10) : '',
-        description,
+        description: sanitiseDescription(row.description),
         amount: typeof row.amount === 'number' ? row.amount : parseFloat(row.amount) || 0,
       };
     }
 
-    async function categoriseBatch(rows) {
+    /** Build the context payload sent with every AI request (userType + occupation). */
+    function aiContextFrom(state) {
+      return {
+        userType: state?.user?.userType || null,
+        occupation: state?.user?.occupation || null,
+      };
+    }
+
+    /**
+     * Categorise sanitised transaction rows via /api/categorise.
+     * `options`: { context, skipAi } — when skipAi is true, we run the local fallback only.
+     */
+    async function categoriseBatch(rows, options = {}) {
       const sanitised = rows.map(sanitiseRow);
+      const { context = null, skipAi = false } = options;
+
+      if (skipAi) {
+        return sanitised.map(r => ({
+          ...r,
+          category: localKeywordFallback(r.description, r.amount),
+          confidence: 0.4,
+          needsReview: true,
+        }));
+      }
+
       try {
         const res = await fetch('/api/categorise', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transactions: sanitised }),
+          body: JSON.stringify({ transactions: sanitised, context }),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
@@ -1164,7 +1421,6 @@
         const data = await res.json();
         return data.results || [];
       } catch (err) {
-        // Graceful degradation — local keyword fallback so user never sees dead end
         console.warn('AI categorise failed, using fallback:', err);
         return sanitised.map(r => ({
           ...r,
@@ -1173,6 +1429,183 @@
           needsReview: true,
         }));
       }
+    }
+
+    /** Send a base64'd PDF or image to /api/categorise-file. Returns array of categorised rows. */
+    async function categoriseFile(file, options = {}) {
+      const { context = null } = options;
+      const base64 = await fileToBase64(file);
+      const fileType = /\.pdf$/i.test(file.name) ? 'pdf' : 'image';
+      const res = await fetch('/api/categorise-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileType, base64, filename: file.name, context }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.error || `API ${res.status}`);
+      }
+      const data = await res.json();
+      return data.results || [];
+    }
+
+    /** Send a base64'd receipt image to /api/extract-receipt. Returns full receipt object. */
+    async function extractReceipt(file, options = {}) {
+      const { context = null } = options;
+      const base64 = await fileToBase64(file);
+      const res = await fetch('/api/extract-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, context }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.error || `API ${res.status}`);
+      }
+      return await res.json();
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          // Strip the `data:<mime>;base64,` prefix — server expects raw b64
+          const raw = String(reader.result || '').split(',').pop() || '';
+          resolve(raw);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    /* ===== IndexedDB for receipt images (AI_AND_PRIVACY.md §4.2) =====
+       localStorage would blow past its ~5MB quota after a handful of receipts.
+       IndexedDB scales into hundreds of MB and gives us per-transaction addressable
+       storage without loading everything into memory. */
+    const RECEIPT_DB  = 'tax_tjommie_media';
+    const RECEIPT_STORE = 'receipts';
+
+    function openReceiptDB() {
+      return new Promise((resolve, reject) => {
+        if (!('indexedDB' in window)) { reject(new Error('no_indexeddb')); return; }
+        const req = indexedDB.open(RECEIPT_DB, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(RECEIPT_STORE)) {
+            db.createObjectStore(RECEIPT_STORE, { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror   = () => reject(req.error);
+      });
+    }
+
+    async function saveReceiptImage(id, base64, mimeType = 'image/jpeg') {
+      try {
+        const db = await openReceiptDB();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(RECEIPT_STORE, 'readwrite');
+          tx.objectStore(RECEIPT_STORE).put({
+            id, base64, mimeType,
+            uploadedAt: new Date().toISOString(),
+            fileSize: Math.round(base64.length * 0.75),
+          });
+          tx.oncomplete = () => resolve(id);
+          tx.onerror    = () => reject(tx.error);
+        });
+      } catch (e) {
+        console.warn('receipt save failed', e);
+        return null;
+      }
+    }
+
+    async function loadReceiptImage(id) {
+      try {
+        const db = await openReceiptDB();
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction(RECEIPT_STORE, 'readonly');
+          const req = tx.objectStore(RECEIPT_STORE).get(id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror   = () => reject(req.error);
+        });
+      } catch { return null; }
+    }
+
+    async function deleteReceiptImage(id) {
+      try {
+        const db = await openReceiptDB();
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(RECEIPT_STORE, 'readwrite');
+          tx.objectStore(RECEIPT_STORE).delete(id);
+          tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+        });
+      } catch {}
+    }
+
+    async function estimateStorageUsed() {
+      if (!navigator.storage?.estimate) return null;
+      try {
+        const e = await navigator.storage.estimate();
+        return { used: e.usage || 0, quota: e.quota || 0 };
+      } catch { return null; }
+    }
+
+    /* ===== Encrypted backup (AI_AND_PRIVACY.md §5.4) =====
+       AES-GCM, key derived from a user passphrase via PBKDF2.
+       Backup JSON → encrypted blob → downloaded or (future) synced to Drive. */
+    const BACKUP_SALT = new Uint8Array([84, 97, 120, 84, 74, 77, 66, 65, 67, 75, 85, 80]); // "TaxTJMBACKUP"
+    const BACKUP_ITERATIONS = 210000;
+
+    async function deriveBackupKey(passphrase) {
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey(
+        'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']
+      );
+      return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: BACKUP_SALT, iterations: BACKUP_ITERATIONS, hash: 'SHA-256' },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    async function encryptBackup(data, passphrase) {
+      const key = await deriveBackupKey(passphrase);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const enc = new TextEncoder();
+      const plaintext = enc.encode(JSON.stringify(data));
+      const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
+      return {
+        format: 'tt-backup-v1',
+        version: APP_VERSION,
+        createdAt: new Date().toISOString(),
+        iv: Array.from(iv),
+        ciphertext: bufferToBase64(ciphertext),
+      };
+    }
+
+    async function decryptBackup(envelope, passphrase) {
+      if (envelope?.format !== 'tt-backup-v1') throw new Error('unknown_format');
+      const key = await deriveBackupKey(passphrase);
+      const iv = new Uint8Array(envelope.iv);
+      const ciphertext = base64ToBuffer(envelope.ciphertext);
+      const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      const dec = new TextDecoder();
+      return JSON.parse(dec.decode(plaintext));
+    }
+
+    function bufferToBase64(buf) {
+      const bytes = new Uint8Array(buf);
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    }
+    function base64ToBuffer(b64) {
+      const s = atob(b64);
+      const bytes = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+      return bytes.buffer;
     }
 
     function localKeywordFallback(desc, amount) {
@@ -1510,14 +1943,16 @@
 
       return (
         <>
-          {step === 'splash'      && <ScreenSplash {...props} />}
-          {step === 'welcome'     && <ScreenWelcome {...props} />}
-          {step === 'upload'      && <ScreenUploadHero {...props} />}
-          {step === 'processing'  && <ScreenProcessing {...props} />}
-          {step === 'review'      && <ScreenReview {...props} />}
-          {step === 'deductions'  && <ScreenDeductionPrompts {...props} />}
-          {step === 'budget'      && <ScreenBudgetConfirm {...props} />}
-          {step === 'backpocket'  && <ScreenBackpocketSuggest {...props} />}
+          {step === 'splash'            && <ScreenSplash {...props} />}
+          {step === 'userType'          && <ScreenUserType {...props} />}
+          {step === 'welcome'           && <ScreenWelcome {...props} />}
+          {step === 'occupationPreview' && <ScreenOccupationPreview {...props} />}
+          {step === 'upload'            && <ScreenUploadHero {...props} />}
+          {step === 'processing'        && <ScreenProcessing {...props} />}
+          {step === 'review'            && <ScreenReview {...props} />}
+          {step === 'deductions'        && <ScreenDeductionPrompts {...props} />}
+          {step === 'budget'            && <ScreenBudgetConfirm {...props} />}
+          {step === 'backpocket'        && <ScreenBackpocketSuggest {...props} />}
         </>
       );
     }
@@ -1542,24 +1977,25 @@
             <p className="t-small t-muted mt-6">For individuals, sole props<br/>and small businesses in SA.</p>
           </div>
           <div style={{width:'100%', maxWidth: 400}}>
-            <button className="btn btn-primary" onClick={() => setStep('welcome')}>Let's go</button>
+            <button className="btn btn-primary" onClick={() => setStep('userType')}>Let's go</button>
           </div>
         </div>
       );
     }
 
-    /* ===== Screen 2 — Welcome form ===== */
-    function ScreenWelcome({ setStep }) {
+    /* ===== Screen 2 — User type selection (NEW in v5, spec §4) =====
+       5 pill-cards, single-select. Saves user.userType.
+       Why this matters: userType drives the Provisional tab visibility,
+       the hero card on Home (refund vs tax-owing), and the AI context
+       sent with every categorisation request. */
+    function ScreenUserType({ setStep }) {
       const { state, dispatch } = useData();
-      const [name, setName] = useState(state.user.name || '');
-      const [monthly, setMonthly] = useState(state.user.monthlyGross || 0);
-      const [taxYear, setTaxYear] = useState(state.user.taxYear || '2025/26');
-
-      const canContinue = name.trim().length > 0;
+      const [selected, setSelected] = useState(state.user.userType || null);
 
       const proceed = () => {
-        dispatch({ type: 'PATCH_USER', payload: { name: name.trim(), monthlyGross: monthly, taxYear } });
-        setStep('upload');
+        if (!selected) return;
+        dispatch({ type: 'PATCH_USER', payload: { userType: selected } });
+        setStep('welcome');
       };
 
       return (
@@ -1569,8 +2005,88 @@
             <div />
             <div />
           </div>
-          <h1 className="t-display mb-2">Quick intro.</h1>
-          <p className="t-body t-secondary mb-8">Three things. Then we get to the fun part.</p>
+          <h1 className="t-display mb-2">Tell us about you.</h1>
+          <p className="t-body t-secondary mb-6">We'll tailor the app to your tax situation.</p>
+
+          <div className="flex flex-col gap-3" style={{marginBottom: 100}}>
+            {USER_TYPES.map(type => {
+              const active = selected === type.id;
+              return (
+                <button
+                  key={type.id}
+                  onClick={() => setSelected(type.id)}
+                  className="card"
+                  style={{
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    borderColor: active ? 'var(--border-teal)' : 'var(--border-faint)',
+                    background: active ? 'var(--teal-dim)' : 'var(--bg-surface)',
+                    transition: 'all var(--motion-fast)',
+                  }}
+                  aria-pressed={active}
+                >
+                  <div className="flex items-center gap-4">
+                    <div style={{fontSize: 28, lineHeight: 1, flexShrink: 0}}>{type.emoji}</div>
+                    <div style={{flex: 1}}>
+                      <div className="t-body" style={{fontWeight: 600, color: active ? 'var(--teal)' : 'var(--text-primary)'}}>{type.name}</div>
+                      <div className="t-small t-secondary" style={{marginTop: 2}}>{type.tagline}</div>
+                    </div>
+                    {active && (
+                      <div className="pill-check" aria-hidden="true">
+                        <Icon name="check" size={10} stroke={3} />
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{position: 'fixed', bottom: 0, left: 0, right: 0, maxWidth: 430, margin: '0 auto', padding: '16px', paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(to bottom, transparent, var(--bg-app) 30%)'}}>
+            <button className="btn btn-primary" disabled={!selected} onClick={proceed}>Continue</button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ===== Screen 3 — Basic details (modified — income removed, occupation added) ===== */
+    function ScreenWelcome({ setStep }) {
+      const { state, dispatch } = useData();
+      const [name, setName] = useState(state.user.name || '');
+      const [occupation, setOccupation] = useState(state.user.occupation || '');
+      const [taxYear, setTaxYear] = useState(state.user.taxYear || '2025/26');
+
+      const canContinue = name.trim().length > 0;
+
+      const proceed = () => {
+        const occ = occupation.trim();
+        dispatch({ type: 'PATCH_USER', payload: { name: name.trim(), occupation: occ, taxYear } });
+        // Route to occupation preview if we recognise the career, else jump straight to upload.
+        const profile = matchCareerProfile(occ);
+        setStep(profile ? 'occupationPreview' : 'upload');
+      };
+
+      // Occupation suggestions by user type — nudge users toward our known profiles
+      const suggestions = useMemo(() => {
+        const byType = {
+          salaried:       ['Accountant', 'Teacher', 'Nurse', 'Software developer', 'Sales rep'],
+          salaried_side:  ['Designer', 'Photographer', 'Consultant', 'Writer'],
+          freelancer:     ['Photographer', 'Designer', 'Developer', 'Videographer', 'Coach', 'Consultant'],
+          small_business: ['Restaurant owner', 'Plumber', 'Electrician', 'Retail owner', 'Agency director'],
+          retired:        ['Retired accountant', 'Retired teacher', 'Pensioner'],
+        };
+        return byType[state.user.userType] || [];
+      }, [state.user.userType]);
+
+      return (
+        <div className="screen">
+          <div className="header">
+            <button className="header-btn" onClick={() => setStep('userType')} aria-label="Back"><Icon name="back" /></button>
+            <div />
+            <div />
+          </div>
+          <h1 className="t-display mb-2">A few quick details.</h1>
+          <p className="t-body t-secondary mb-8">So I can set things up properly for you.</p>
 
           <div className="flex flex-col gap-5">
             <div>
@@ -1579,8 +2095,18 @@
             </div>
 
             <div>
-              <label className="input-label">Roughly what do you earn per month, before tax? <span className="t-muted">(optional)</span></label>
-              <CurrencyInput value={monthly} onChange={setMonthly} placeholder="0" />
+              <label className="input-label">What do you do?</label>
+              <input
+                className="input"
+                placeholder={suggestions[0] || 'e.g. Photographer'}
+                value={occupation}
+                onChange={e => setOccupation(e.target.value)}
+                list="occupation-suggest"
+              />
+              <datalist id="occupation-suggest">
+                {suggestions.map(s => <option key={s} value={s} />)}
+              </datalist>
+              <p className="t-small t-muted mt-2">Helps me spot trade-specific deductions.</p>
             </div>
 
             <div>
@@ -1599,41 +2125,132 @@
       );
     }
 
-    /* ===== Screen 3 — Upload hero ===== */
+    /* ===== Screen 4 — Occupation preview (NEW, conditional) =====
+       Only shown if matchCareerProfile() returned a known profile.
+       Displays a friendly acknowledgement + preview of deductions the AI will look for. */
+    function ScreenOccupationPreview({ setStep }) {
+      const { state } = useData();
+      const profile = useMemo(() => matchCareerProfile(state.user.occupation), [state.user.occupation]);
+      if (!profile) {
+        // Safety: if we landed here without a match, skip ahead.
+        setTimeout(() => setStep('upload'), 0);
+        return null;
+      }
+      return (
+        <div className="screen">
+          <div className="header">
+            <button className="header-btn" onClick={() => setStep('welcome')} aria-label="Back"><Icon name="back" /></button>
+            <div />
+            <div />
+          </div>
+
+          <div className="flex items-center gap-3 mb-5">
+            <div className="tjommie">TT</div>
+            <div>
+              <h1 className="t-h1">Nice — {profile.name.toLowerCase()}.</h1>
+            </div>
+          </div>
+
+          <p className="t-body t-secondary mb-4">Common deductions I'll look for as we go:</p>
+
+          <div className="card mb-6">
+            <div className="flex flex-col gap-3">
+              {profile.deductions.map((d, i) => (
+                <div key={i} className="flex items-start gap-3">
+                  <span className="cat-dot cat-dot-teal" style={{marginTop: 8}}></span>
+                  <div className="t-body">{d}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{position: 'sticky', bottom: 16}}>
+            <button className="btn btn-primary" onClick={() => setStep('upload')}>Got it, continue</button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ===== Screen 5 — Upload hero (multi-file in v5 — spec §4 Screen 5) ===== */
     function ScreenUploadHero({ setStep, setUploadedTxns, setUploadMeta }) {
-      const { showToast } = useData();
+      const { state, dispatch, showToast, setSheet } = useData();
       const [dragOver, setDragOver] = useState(false);
       const [busy, setBusy] = useState(false);
+      /** Selected files before processing — each entry: { file, id, status } */
+      const [pending, setPending] = useState([]);
       const inputRef = useRef(null);
 
-      const handleFiles = async (files) => {
-        if (!files || !files.length) return;
-        setBusy(true);
-        try {
-          const file = files[0];
-          const isCSV = /\.csv$/i.test(file.name);
-          const isPDF = /\.pdf$/i.test(file.name);
-          const isImg = /\.(png|jpg|jpeg|heic|webp)$/i.test(file.name);
-          let rows = [];
-          if (isCSV) {
-            rows = await parseCSV(file);
-          } else if (isPDF || isImg) {
-            // For now, rows come back empty and Processing screen calls API with the raw file
-            // Minimal: show the user we support it but fallback to local demo data if API unavailable
-            rows = [];
-          } else {
-            showToast('Unsupported file type. Use CSV, PDF or image.', 'error');
-            setBusy(false);
-            return;
+      const fileType = (name) => {
+        if (/\.csv$/i.test(name)) return 'csv';
+        if (/\.pdf$/i.test(name)) return 'pdf';
+        if (/\.(png|jpg|jpeg|heic|webp)$/i.test(name)) return 'image';
+        return null;
+      };
+
+      const addFiles = (files) => {
+        const list = Array.from(files || []);
+        if (!list.length) return;
+        const accepted = [];
+        for (const f of list) {
+          if (!fileType(f.name)) {
+            showToast(`${f.name}: unsupported format`, 'error');
+            continue;
           }
-          setUploadedTxns(rows);
-          setUploadMeta({ name: file.name, type: isCSV ? 'csv' : (isPDF ? 'pdf' : 'image'), size: file.size });
-          setStep('processing');
-        } catch (err) {
-          console.error(err);
-          showToast('Could not read that file. Try another?', 'error');
-          setBusy(false);
+          if (f.size > 10 * 1024 * 1024) {
+            showToast(`${f.name}: over 10MB limit`, 'error');
+            continue;
+          }
+          accepted.push({ id: uid('file'), file: f, status: 'pending' });
         }
+        setPending(prev => [...prev, ...accepted]);
+      };
+
+      const removeFile = (id) => setPending(prev => prev.filter(f => f.id !== id));
+
+      const showPrivacyModal = () => setSheet({
+        title: 'Your data stays on your device',
+        content: <PrivacyModalBody onAccept={() => setSheet(null)} />,
+      });
+
+      const processAll = async () => {
+        if (!pending.length) return;
+        setBusy(true);
+
+        // Show privacy modal on first-ever upload (AI_AND_PRIVACY.md §7.3)
+        if (!state.settings.hasSeenPrivacyModal) {
+          await new Promise(resolve => {
+            setSheet({
+              title: 'Your data stays on your device',
+              content: <PrivacyModalBody onAccept={() => { setSheet(null); dispatch({ type: 'PATCH_SETTINGS', payload: { hasSeenPrivacyModal: true }}); resolve(); }} />,
+            });
+          });
+        }
+
+        // Parse each file client-side where possible; PDFs/images flow via /api/categorise-file
+        const allRows = [];
+        const fileMetas = [];
+        for (const entry of pending) {
+          const t = fileType(entry.file.name);
+          try {
+            let rows = [];
+            if (t === 'csv') {
+              rows = await parseCSV(entry.file);
+              rows = rows.map(r => ({ ...r, _sourceFile: entry.file.name }));
+            } else {
+              // PDF / image: hand off to ScreenProcessing which calls /api/categorise-file
+              rows = [{ _deferred: true, _file: entry.file, _sourceFile: entry.file.name, _fileType: t }];
+            }
+            allRows.push(...rows);
+            fileMetas.push({ name: entry.file.name, type: t, size: entry.file.size });
+          } catch (err) {
+            console.error('File parse failed:', entry.file.name, err);
+            showToast(`Couldn't read ${entry.file.name}`, 'error');
+          }
+        }
+
+        setUploadedTxns(allRows);
+        setUploadMeta({ files: fileMetas });
+        setStep('processing');
       };
 
       return (
@@ -1645,111 +2262,209 @@
           </div>
 
           <h1 className="t-display mb-3">Let's get you sorted.</h1>
-          <p className="t-body t-secondary mb-8" style={{lineHeight: 1.55}}>
-            Upload one to three months of your bank statements. I'll sort every transaction — find your tax deductions, show you where your money goes, flag anything you need to double-check. Takes about 30 seconds.
+          <p className="t-body t-secondary mb-6" style={{lineHeight: 1.55}}>
+            Drop in everything you've got: the last 2–3 months of bank statements, credit card statements, even receipt photos. The more I see, the better I understand your money.
           </p>
 
           <div
             className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
             onDragOver={e => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={e => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}
+            onDrop={e => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer.files); }}
             onClick={() => inputRef.current?.click()}
             role="button"
             tabIndex={0}
           >
             <div className="upload-icon-wrap"><Icon name="upload" size={28} /></div>
-            <div className="t-body" style={{fontWeight: 600}}>Drop statement here</div>
-            <div className="t-small t-muted">or tap to choose a file</div>
-            <div className="t-micro mt-2">CSV · PDF · IMAGE</div>
+            <div className="t-body" style={{fontWeight: 600}}>Drop statements here</div>
+            <div className="t-small t-muted">or tap to choose files</div>
+            <div className="t-micro mt-2">CSV · PDF · IMAGE · MULTIPLE FILES OK</div>
+            {/* MULTI-FILE input — the v5 non-negotiable fix */}
             <input
               ref={inputRef}
               type="file"
+              multiple
               className="sr-only"
               accept=".csv,.pdf,.png,.jpg,.jpeg,.webp,.heic"
-              onChange={e => handleFiles(e.target.files)}
+              onChange={e => addFiles(e.target.files)}
             />
           </div>
 
-          <p className="t-small t-muted mt-5 flex items-center justify-center gap-2" style={{lineHeight: 1.5}}>
+          {pending.length > 0 && (
+            <div className="card mt-4" style={{padding: 12}}>
+              {pending.map(entry => (
+                <div key={entry.id} className="flex items-center gap-3" style={{padding: '10px 4px'}}>
+                  <Icon name="check" size={14} />
+                  <div style={{flex: 1, minWidth: 0}}>
+                    <div className="t-body" style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500}}>{entry.file.name}</div>
+                    <div className="t-small t-muted">{Math.round(entry.file.size / 1024)} KB · {fileType(entry.file.name)?.toUpperCase()}</div>
+                  </div>
+                  <button onClick={() => removeFile(entry.id)} className="header-btn" aria-label="Remove" style={{width: 32, height: 32}}>
+                    <Icon name="close" size={16} />
+                  </button>
+                </div>
+              ))}
+              <button className="btn-link" onClick={() => inputRef.current?.click()} style={{padding: '8px 4px'}}>+ Add more files</button>
+            </div>
+          )}
+
+          <p className="t-small t-muted mt-5 flex items-center justify-center gap-2" style={{lineHeight: 1.5, flexWrap: 'wrap'}}>
             <Icon name="lock" size={14} />
-            Your account numbers never leave your device. We sanitise the file before AI reads it.
+            <span>Your account numbers never leave your device. We sanitise every file before AI reads it.</span>
+            <button onClick={showPrivacyModal} style={{color: 'var(--teal)', textDecoration: 'underline', background: 'none', fontSize: 'inherit', padding: 0}}>Learn more</button>
           </p>
 
-          <div className="text-center mt-6">
+          <div className="text-center mt-4">
             <button className="btn-link" onClick={() => setStep('processing')}>
-              Don't have a statement ready? Skip for now
+              Don't have statements ready? Skip for now
             </button>
           </div>
 
-          {busy && <p className="text-center t-small mt-4 t-secondary">Reading file…</p>}
+          {pending.length > 0 && (
+            <div style={{position: 'fixed', bottom: 0, left: 0, right: 0, maxWidth: 430, margin: '0 auto', padding: '16px', paddingBottom: 'calc(16px + env(safe-area-inset-bottom, 0px))', background: 'linear-gradient(to bottom, transparent, var(--bg-app) 30%)'}}>
+              <button className="btn btn-primary" disabled={busy} onClick={processAll}>
+                {busy ? 'Reading…' : `Process ${pending.length} file${pending.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          )}
         </div>
       );
     }
 
-    /* ===== Screen 4 — Processing ===== */
+    /* Privacy modal body (spec §7.1 + AI_AND_PRIVACY.md §1) */
+    function PrivacyModalBody({ onAccept }) {
+      return (
+        <div className="flex flex-col gap-4">
+          <p className="t-body t-secondary">Your name, income, tax profile, compliance notes, receipt images, budget, and savings goals all live in your browser's local storage — never on our servers.</p>
+          <div className="card" style={{padding: 16}}>
+            <div className="t-small" style={{fontWeight: 600, marginBottom: 6}}>What we send to AI:</div>
+            <div className="t-small t-secondary">Only transaction date, description, and amount. Nothing else.</div>
+          </div>
+          <div className="card" style={{padding: 16}}>
+            <div className="t-small" style={{fontWeight: 600, marginBottom: 6}}>What's stripped before sending:</div>
+            <div className="t-small t-secondary">Account numbers, card numbers, reference codes longer than 10 characters, running balances, SA ID numbers, phone numbers.</div>
+          </div>
+          <div className="card" style={{padding: 16}}>
+            <div className="t-small" style={{fontWeight: 600, marginBottom: 6}}>Zero-retention with Anthropic:</div>
+            <div className="t-small t-secondary">Every AI call includes the <code style={{fontSize: 11, background: 'var(--bg-input)', padding: '1px 4px', borderRadius: 3}}>x-anthropic-zero-retention: true</code> header. Anthropic doesn't cache or train on our requests.</div>
+          </div>
+          <div className="card" style={{padding: 16}}>
+            <div className="t-small" style={{fontWeight: 600, marginBottom: 6}}>You can turn AI off:</div>
+            <div className="t-small t-secondary">Settings → Privacy → "Skip AI processing" disables the API entirely and uses local keyword rules.</div>
+          </div>
+          <button className="btn btn-primary" onClick={onAccept}>I understand</button>
+        </div>
+      );
+    }
+
+    /* ===== Screen 6 — Processing (v5: multi-file, deduplication, per-file progress) ===== */
     function ScreenProcessing({ setStep, uploadedTxns, setUploadedTxns, uploadMeta }) {
-      const { showToast } = useData();
+      const { state, showToast } = useData();
       const [stage, setStage] = useState('reading');
       const [count, setCount] = useState(0);
-      const [total, setTotal] = useState(uploadedTxns.length || 12);
+      const [total, setTotal] = useState(0);
+      const [currentFile, setCurrentFile] = useState(null);
       const [tickerItems, setTickerItems] = useState([]);
+      const [dedupMessage, setDedupMessage] = useState(null);
       const ranRef = useRef(false);
 
       useEffect(() => {
         if (ranRef.current) return;
         ranRef.current = true;
+        const MIN_DURATION = 4000;
+        const MAX_DURATION = 20000;
+        const startTs = Date.now();
+        const context = aiContextFrom(state);
+        const skipAi = state.settings?.skipAiProcessing;
 
         async function run() {
-          const minDuration = 4000;
-          const startTs = Date.now();
-
-          // Stage 1: reading
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 500));
           setStage('sorting');
 
-          // If we have real rows, categorise via API
           let results = [];
-          if (uploadedTxns.length > 0) {
-            // Progressive count-up as we call the API
-            const chunks = [];
-            const size = 25;
-            for (let i = 0; i < uploadedTxns.length; i += size) {
-              chunks.push(uploadedTxns.slice(i, i + size));
-            }
-            setTotal(uploadedTxns.length);
-            for (const chunk of chunks) {
-              const cat = await categoriseBatch(chunk);
-              results = results.concat(cat);
-              setCount(results.length);
-              // Populate ticker with last few
-              const lastFew = cat.slice(-3).map(r => ({
-                desc: (r.description || '').slice(0, 28),
+
+          // Case A: skipped upload — use 150+ demo transactions
+          if (!uploadedTxns.length) {
+            const demo = buildDemoTransactions();
+            setTotal(demo.length);
+            // Animate the ticker with a chunk of demo rows
+            for (let i = 0; i < demo.length; i += 3) {
+              setCount(Math.min(demo.length, i + 3));
+              const chunk = demo.slice(i, i + 3);
+              setTickerItems(prev => [...prev.slice(-12), ...chunk.map(r => ({
+                desc: r.description.slice(0, 30),
                 cat: CATEGORIES[r.category]?.label || r.category,
-              }));
-              setTickerItems(prev => [...prev.slice(-12), ...lastFew]);
+              }))]);
+              if (Date.now() - startTs > MAX_DURATION) break;
+              await new Promise(r => setTimeout(r, 40));
             }
+            results = demo;
           } else {
-            // Demo data (user skipped or file type not yet parsed)
-            const demoRows = buildDemoTransactions();
-            setTotal(demoRows.length);
-            for (let i = 0; i < demoRows.length; i++) {
-              await new Promise(r => setTimeout(r, 120));
-              setCount(i + 1);
-              setTickerItems(prev => [...prev.slice(-12), {
-                desc: demoRows[i].description.slice(0, 28),
-                cat: CATEGORIES[demoRows[i].category]?.label || demoRows[i].category,
-              }]);
+            // Case B: real upload(s). Split rows by _sourceFile, process each, then dedup.
+            const deferredFiles = uploadedTxns.filter(r => r._deferred);
+            const csvRows = uploadedTxns.filter(r => !r._deferred);
+
+            // Tally total for progress bar — estimate ~50 txns per PDF/image
+            setTotal(csvRows.length + deferredFiles.length * 50);
+
+            // Process CSV rows in chunks
+            if (csvRows.length) {
+              const byFile = {};
+              csvRows.forEach(r => { (byFile[r._sourceFile || 'Unknown'] ||= []).push(r); });
+              for (const [fileName, rows] of Object.entries(byFile)) {
+                setCurrentFile(fileName);
+                const chunkSize = 50;
+                for (let i = 0; i < rows.length; i += chunkSize) {
+                  const chunk = rows.slice(i, i + chunkSize);
+                  const cat = await categoriseBatch(chunk, { context, skipAi });
+                  cat.forEach(r => { r._sourceFile = fileName; });
+                  results = results.concat(cat);
+                  setCount(results.length);
+                  setTickerItems(prev => [...prev.slice(-12), ...cat.slice(-3).map(r => ({
+                    desc: (r.description || '').slice(0, 30),
+                    cat: CATEGORIES[r.category]?.label || r.category,
+                  }))]);
+                }
+              }
             }
-            results = demoRows;
+
+            // Process PDFs/images one at a time
+            for (const def of deferredFiles) {
+              setCurrentFile(def._sourceFile);
+              try {
+                if (skipAi) {
+                  showToast('Skip AI is on — PDFs need AI. Try CSV export.', 'error');
+                  continue;
+                }
+                const cat = await categoriseFile(def._file, { context });
+                cat.forEach(r => { r._sourceFile = def._sourceFile; });
+                results = results.concat(cat);
+                setCount(results.length);
+                setTickerItems(prev => [...prev.slice(-12), ...cat.slice(-3).map(r => ({
+                  desc: (r.description || '').slice(0, 30),
+                  cat: CATEGORIES[r.category]?.label || r.category,
+                }))]);
+              } catch (err) {
+                console.error('PDF/image processing failed:', err);
+                showToast(`Couldn't read ${def._sourceFile}: ${err.message}`, 'error');
+              }
+            }
+
+            // DEDUPLICATION — within ±2 days, same amount, fuzzy description match
+            const beforeDedup = results.length;
+            results = dedupTransactions(results);
+            const removed = beforeDedup - results.length;
+            if (removed > 0) {
+              setDedupMessage(`Matched ${removed} duplicate${removed === 1 ? '' : 's'} — won't count twice`);
+            }
           }
 
           setStage('finding');
-          // Wait out minimum duration
+          // Hold the screen for at least MIN_DURATION so users see the work happening
           const elapsed = Date.now() - startTs;
-          if (elapsed < minDuration) await new Promise(r => setTimeout(r, minDuration - elapsed));
+          if (elapsed < MIN_DURATION) await new Promise(r => setTimeout(r, MIN_DURATION - elapsed));
 
-          // Convert results to txn objects and hand off to review
+          // Convert results to txn objects; transfers/ATMs are dropped here
           const txns = results.map(r => ({
             id: uid('txn'),
             accountId: 'acc_main',
@@ -1765,6 +2480,9 @@
             complianceNote: null,
             taxYear: taxYearForDate(r.date || new Date().toISOString().slice(0, 10)),
             receiptAttached: false,
+            sourceFile: r._sourceFile || null,
+            receiptId: null,
+            subcategoryBreakdown: null,
             createdAt: new Date().toISOString(),
           })).filter(t => t.category !== 'ignore');
 
@@ -1780,16 +2498,22 @@
       }, []);
 
       const stageCopy = {
-        reading:  'Reading your statements…',
-        sorting:  'Sorting transactions…',
+        reading:  currentFile ? `Reading ${currentFile}…` : 'Reading your statements…',
+        sorting:  currentFile ? `Sorting ${currentFile}…` : 'Sorting transactions…',
         finding:  'Finding your deductions…',
       };
+      const fileCount = uploadMeta?.files?.length || 0;
 
       return (
         <div className="screen flex flex-col items-center justify-center" style={{minHeight: '100dvh'}}>
           <div className="tjommie tjommie-lg tjommie-pulse mb-8">TT</div>
-          <h2 className="t-h1 text-center mb-3">{stageCopy[stage]}</h2>
-          <p className="t-body t-secondary text-center mb-6">{count} of {total} transactions categorised</p>
+          <h2 className="t-h1 text-center mb-3" style={{padding: '0 16px'}}>{stageCopy[stage]}</h2>
+          <p className="t-body t-secondary text-center mb-1">
+            {count} of {total} transactions categorised
+            {fileCount > 1 && <span> across {fileCount} files</span>}
+          </p>
+          {dedupMessage && <p className="t-small t-teal mb-6">{dedupMessage}</p>}
+          {!dedupMessage && <div className="mb-6" />}
 
           <div className="card w-full" style={{maxWidth: 360}}>
             <div className="ticker">
@@ -1805,54 +2529,270 @@
           </div>
 
           <div className="progress-bar mt-8" style={{width: '80%', maxWidth: 300}}>
-            <div className="progress-bar-fill" style={{width: `${Math.min(100, (count/total)*100)}%`}}></div>
+            <div className="progress-bar-fill" style={{width: `${Math.min(100, total ? (count/total)*100 : 0)}%`}}></div>
           </div>
         </div>
       );
     }
 
-    function buildDemoTransactions() {
-      // Used when user skipped upload or file couldn't be parsed — shows realistic review state
-      const base = new Date(); base.setDate(14);
-      const iso = (d) => d.toISOString().slice(0, 10);
-      const mk = (offset, description, amount, category, confidence = 0.95, needsReview = false) => {
-        const d = new Date(base); d.setDate(base.getDate() - offset);
-        return { date: iso(d), description, amount: -Math.abs(amount), category, confidence, needsReview };
-      };
-      return [
-        mk(0, 'WOOLWORTHS CAPE TOWN', 847.50, 'groceries'),
-        mk(0, 'SHELL SEA POINT', 650.00, 'vehicle_travel'),
-        mk(1, 'ADOBE INC', 289.00, 'software'),
-        mk(1, 'UBER BV', 127.00, 'transport_personal', 0.55, true),
-        mk(2, 'VODACOM', 799.00, 'phone_internet'),
-        mk(3, 'CHECKERS CLAREMONT', 1240.00, 'groceries'),
-        mk(3, 'NETFLIX', 199.00, 'subscriptions_personal'),
-        mk(4, 'ENGEN MAIN RD', 820.00, 'vehicle_travel'),
-        mk(5, 'TAKEALOT.COM', 12999.00, 'equipment', 0.82),
-        mk(6, 'DIS-CHEM', 345.00, 'medical'),
-        mk(7, 'MWEB FIBRE', 899.00, 'home_office'),
-        mk(9, 'SPUR STEAKHOUSE', 456.00, 'eating_out'),
-      ];
+    /**
+     * Detect and remove duplicate transactions across multiple files.
+     * Rule: same amount (±R0.01), same fuzzy description, within ±2 days = duplicate.
+     * Also drops transfer pairs — an outgoing "Transfer to CC" matching an incoming
+     * credit card payment is marked ignore so budgets don't double-count.
+     */
+    function dedupTransactions(rows) {
+      const out = [];
+      const seen = new Set();
+      for (const r of rows) {
+        // Normalise description to the first 4 alphanumeric tokens
+        const key = [
+          r.date?.slice(0, 10) || '',
+          Math.round(Math.abs(r.amount || 0) * 100),
+          (r.description || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean).slice(0, 4).join(' '),
+        ].join('|');
+
+        // Also check ±1 day neighbours for near-dupes
+        let isDupe = false;
+        if (seen.has(key)) isDupe = true;
+        else {
+          const d = new Date(r.date);
+          for (const dayOffset of [-2, -1, 1, 2]) {
+            const nd = new Date(d); nd.setDate(d.getDate() + dayOffset);
+            const altKey = [nd.toISOString().slice(0, 10), Math.round(Math.abs(r.amount||0) * 100), key.split('|')[2]].join('|');
+            if (seen.has(altKey)) { isDupe = true; break; }
+          }
+        }
+
+        if (isDupe) continue;
+        seen.add(key);
+        out.push(r);
+      }
+      return out;
     }
 
-    /* ===== Screen 5 — Review (HERO SCREEN, match 01-review-screen.png) ===== */
+    /**
+     * buildDemoTransactions — 150+ realistic SA transactions across 3 months (spec §8.3).
+     * Skipped-upload users see a populated Review screen with the same shape as the real thing,
+     * so the rest of onboarding (smart prompts, budget, backpocket) has data to work with.
+     *
+     * Transaction mix modeled on a Cape Town freelancer's typical month:
+     *   - Recurring monthly: rent/bond, Eskom, Vodacom/Cell C, MWEB fibre, Netflix, DStv, Discovery Health, Sanlam RA
+     *   - Variable: groceries (weekly), fuel (2–3x month), Uber (sporadic), eating out, online shopping, clinic visits
+     *   - Work-related: Adobe, Google Workspace, Dropbox, Takealot equipment, Orms Direct, client entertainment
+     *   - Income: monthly salary deposit, sporadic client payments
+     */
+    function buildDemoTransactions() {
+      const today = new Date();
+      const iso = (d) => d.toISOString().slice(0, 10);
+
+      const dayOf = (monthsBack, day) => {
+        const d = new Date(today.getFullYear(), today.getMonth() - monthsBack, day);
+        // Clamp future dates to today (if we generate a March 30 for "this month" and today is March 14, shift back)
+        if (d > today) d.setMonth(d.getMonth() - 1);
+        return iso(d);
+      };
+
+      const rnd = (min, max) => Math.round((min + Math.random() * (max - min)) * 100) / 100;
+      const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+      const out = [];
+      const mk = (date, description, amount, category, confidence = 0.95, needsReview = false) => {
+        out.push({ date, description, amount: amount, category, confidence, needsReview });
+      };
+
+      // Monthly recurring debit orders + deposits across the last 3 months
+      for (let m = 2; m >= 0; m--) {
+        // Salary / income deposits (around 25th)
+        mk(dayOf(m, 25), 'SALARY DEPOSIT — ACME STUDIO', rnd(32000, 48000), 'ignore', 1.0);
+        if (m !== 0 && Math.random() > 0.4) {
+          mk(dayOf(m, 18), 'CLIENT PAYMENT — BLUE HORIZON (PTY) LTD', rnd(8500, 22000), 'ignore', 0.98);
+        }
+
+        // Rent / bond (1st)
+        mk(dayOf(m, 1), 'DEBIT ORDER — PROPERTY24 RENTAL', -15500, 'home_office', 0.92);
+
+        // Eskom electricity
+        mk(dayOf(m, 3), 'ESKOM PREPAID TOKEN', -rnd(1600, 2400), 'home_office', 0.94);
+
+        // Phone + fibre
+        mk(dayOf(m, 5), 'VODACOM DEBIT ORDER', -899, 'phone_internet', 0.88);
+        mk(dayOf(m, 7), 'MWEB FIBRE MONTHLY', -1049, 'home_office', 0.85);
+
+        // Medical + RA
+        mk(dayOf(m, 2), 'DISCOVERY HEALTH MEDICAL SCHEME', -rnd(3200, 4100), 'medical', 0.96);
+        mk(dayOf(m, 2), 'SANLAM RETIREMENT ANNUITY', -2500, 'other_personal', 0.55, true);
+
+        // Subscriptions
+        mk(dayOf(m, 10), 'NETFLIX', -199, 'subscriptions_personal', 0.99);
+        mk(dayOf(m, 12), 'SPOTIFY PREMIUM', -69, 'subscriptions_personal', 0.99);
+        mk(dayOf(m, 15), 'DSTV PREMIUM', -899, 'subscriptions_personal', 0.97);
+
+        // Work software (appears as deductible — AI should flag them)
+        mk(dayOf(m, 8), 'ADOBE CREATIVE CLOUD', -849, 'software', 0.97);
+        mk(dayOf(m, 8), 'GOOGLE WORKSPACE', -289, 'software', 0.96);
+        mk(dayOf(m, 20), 'DROPBOX BUSINESS', -219, 'software', 0.94);
+        if (m === 0) mk(dayOf(m, 14), 'CHATGPT PLUS', -380, 'software', 0.86);
+
+        // Insurance (personal + business)
+        mk(dayOf(m, 4), 'OUTSURANCE — CAR', -1650, 'insurance_personal', 0.92);
+        mk(dayOf(m, 4), 'PROFESSIONAL INDEMNITY — SANTAM', -420, 'professional_services', 0.72);
+
+        // Weekly groceries (2x/week = shop + top-up run)
+        for (let w = 0; w < 4; w++) {
+          const day1 = 6 + w * 7 + Math.floor(Math.random() * 2);
+          const day2 = 8 + w * 7 + Math.floor(Math.random() * 2);
+          if (day1 <= 28) mk(dayOf(m, day1), pick(['WOOLWORTHS CAPE TOWN', 'CHECKERS CLAREMONT', 'PICK N PAY RONDEBOSCH', 'WOOLIES FOOD V&A', 'SPAR GARDENS']), -rnd(480, 1450), 'groceries', 0.94);
+          if (day2 <= 28 && Math.random() > 0.3) mk(dayOf(m, day2), pick(['PICK N PAY EXPRESS', 'WOOLIES FOOD', 'SPAR TOPS']), -rnd(120, 420), 'groceries', 0.96);
+        }
+
+        // Fuel (2–3x per month)
+        const fuelDays = [Math.floor(Math.random() * 8) + 4, Math.floor(Math.random() * 8) + 14, Math.floor(Math.random() * 8) + 22];
+        for (const fd of fuelDays) {
+          if (fd > 28) continue;
+          mk(dayOf(m, fd), pick(['ENGEN SEA POINT', 'SHELL MAIN ROAD', 'SASOL N1 STELLENBOSCH', 'BP CAMPS BAY']), -rnd(580, 1250), 'vehicle_travel', 0.93);
+        }
+
+        // Eating out (8–10 per month including coffee runs)
+        const eatingDays = [3, 6, 9, 11, 13, 16, 19, 22, 24, 27];
+        for (const ed of eatingDays) {
+          if (ed > 28 || Math.random() < 0.2) continue;
+          const restaurant = pick(['SPUR STEAKHOUSE', 'OCEAN BASKET', 'NANDOS OBS', 'MUGG & BEAN', 'VIDA E CAFFÈ', 'KAUAI JUICE', 'STARBUCKS MALL', 'ROYALE EATERY', 'COL CACCHIO', 'TASHAS', 'HUSSAR GRILL', 'ROCOMAMAS']);
+          mk(dayOf(m, ed), restaurant, -rnd(59, 650), 'eating_out', 0.88);
+        }
+
+        // Client entertainment — some restaurants flagged (ambiguous intentionally)
+        if (Math.random() > 0.5) {
+          mk(dayOf(m, 11), 'LA COLOMBE RESTAURANT', -rnd(1400, 2800), 'client_entertainment', 0.62, true);
+        }
+
+        // Medical visits
+        if (Math.random() > 0.4) mk(dayOf(m, 12), pick(['DIS-CHEM LIFE', 'CLICKS PHARMACY', 'DR N MKHIZE GP']), -rnd(250, 1150), 'medical', 0.93);
+
+        // Online shopping — Takealot amount-dependent
+        const tkAmount = rnd(180, 14000);
+        mk(dayOf(m, 16), 'TAKEALOT.COM', -tkAmount, tkAmount > 2000 ? 'equipment' : 'other_personal', tkAmount > 2000 ? 0.84 : 0.72, tkAmount > 2000);
+
+        // Occasional Uber (flagged as review — could be personal or work)
+        if (Math.random() > 0.3) mk(dayOf(m, 17), 'UBER BV', -rnd(85, 220), 'transport_personal', 0.55, true);
+        if (Math.random() > 0.6) mk(dayOf(m, 23), 'UBER EATS', -rnd(120, 340), 'eating_out', 0.94);
+
+        // Bank charges
+        mk(dayOf(m, 28), 'FNB ACCOUNT MONTHLY FEE', -115, 'bank_charges', 0.99);
+
+        // Clothing, personal care (occasional)
+        if (Math.random() > 0.5) mk(dayOf(m, 21), pick(['MR PRICE V&A', 'WOOLWORTHS CLOTHING', 'COTTON ON']), -rnd(299, 1299), 'clothing', 0.88);
+        if (Math.random() > 0.5) mk(dayOf(m, 9), pick(['SORBET HAIR', 'THE HAIR LAB', 'DIS-CHEM BEAUTY']), -rnd(180, 780), 'personal_care', 0.87);
+
+        // Transfers (should be filtered out as 'ignore' by the categoriser)
+        if (m === 0) mk(dayOf(m, 26), 'TRANSFER TO SAVINGS ACC', -5000, 'ignore', 1.0);
+        mk(dayOf(m, 27), 'CC PAYMENT — FNB CREDIT CARD', -rnd(3500, 9200), 'ignore', 1.0);
+
+        // ATM (should be ignored)
+        mk(dayOf(m, 15), 'ATM CASH WITHDRAWAL', -rnd(500, 2000), 'ignore', 1.0);
+
+        // Occasional bigger work items — trigger deduction prompts
+        if (m === 1) {
+          mk(dayOf(m, 18), 'ORMS DIRECT — CAMERA LENS', -18999, 'equipment', 0.92);
+          mk(dayOf(m, 22), 'UDEMY — ONLINE COURSE', -399, 'training', 0.88);
+          mk(dayOf(m, 6), 'CANVA PRO', -189, 'software', 0.95);
+        }
+        if (m === 2) {
+          mk(dayOf(m, 9), 'BUILDERS WAREHOUSE — DESK', -3499, 'equipment', 0.81);
+          mk(dayOf(m, 14), 'HERTZ CAR RENTAL', -2400, 'vehicle_travel', 0.72, true);
+        }
+
+        // Extra variety — coffee, small purchases, parking
+        for (const [day, merchant, min, max, cat] of [
+          [2, 'VIDA E CAFFE',          45,  95,  'eating_out'],
+          [5, 'STARBUCKS',              55, 120,  'eating_out'],
+          [8, 'SEATTLE COFFEE',         40,  85,  'eating_out'],
+          [11, 'WOOLIES CAFE',          50, 180,  'eating_out'],
+          [14, 'BOOTLEGGER COFFEE',     55, 140,  'eating_out'],
+          [17, 'KAUAI',                 70, 185,  'eating_out'],
+          [20, 'OCEAN BASKET',         180, 620,  'eating_out'],
+          [23, 'CAFE CAPRICE',          95, 320,  'eating_out'],
+        ]) {
+          if (Math.random() > 0.3) mk(dayOf(m, day), merchant, -rnd(min, max), cat, 0.93);
+        }
+
+        // Parking, toll gates, e-tolls
+        if (Math.random() > 0.4) mk(dayOf(m, 6),  'BAY PARKING V&A',         -rnd(20, 90),  'vehicle_travel', 0.82);
+        if (Math.random() > 0.5) mk(dayOf(m, 20), 'SANRAL E-TOLL',           -rnd(35, 180), 'vehicle_travel', 0.88);
+        if (Math.random() > 0.6) mk(dayOf(m, 24), 'N1 PARKING SANDTON',      -rnd(30, 60),  'vehicle_travel', 0.80);
+
+        // Amazon, Loot, Yuppiechef — occasional online orders
+        if (Math.random() > 0.6) mk(dayOf(m, 13), 'LOOT.CO.ZA',              -rnd(250, 850), 'other_personal', 0.78);
+        if (Math.random() > 0.6) mk(dayOf(m, 19), 'YUPPIECHEF',              -rnd(390, 1890), 'other_personal', 0.74);
+
+        // Ride shares + deliveries
+        if (Math.random() > 0.5) mk(dayOf(m, 8),  'UBER EATS DELIVERY',       -rnd(110, 290), 'eating_out', 0.94);
+        if (Math.random() > 0.5) mk(dayOf(m, 22), 'MR D FOOD',                -rnd(130, 320), 'eating_out', 0.94);
+        if (Math.random() > 0.6) mk(dayOf(m, 10), 'BOLT RIDE',                -rnd(50, 180),  'transport_personal', 0.68, true);
+
+        // Small software subscriptions + books (work-deductible for many)
+        if (m === 0 && Math.random() > 0.5) mk(dayOf(m, 6),  'NOTION LABS',         -130, 'software', 0.94);
+        if (m === 1 && Math.random() > 0.5) mk(dayOf(m, 13), 'LOOT.CO.ZA — BOOK',   -rnd(280, 620), 'training', 0.70, true);
+        if (m === 0) mk(dayOf(m, 14), 'APPLE ICLOUD STORAGE', -39, 'software', 0.96);
+
+        // Bar / nightlife (occasional)
+        if (Math.random() > 0.7) mk(dayOf(m, 25), pick(['THE SHACK', 'BEERHOUSE', 'ASOKA BAR']), -rnd(180, 780), 'entertainment', 0.88);
+      }
+
+      return out;
+    }
+
+    /* ===== Screen 7 — Review (HERO SCREEN, match 01-review-screen.png) =====
+       v5 additions:
+         - File tabs (All / Cheque / CC) to filter by source file
+         - Dual hero stats: deductions + avg monthly spend (side-by-side on card)
+    */
     function ScreenReview({ setStep, uploadedTxns, setUploadedTxns, uploadMeta }) {
       const { dispatch, showToast } = useData();
       const [editing, setEditing] = useState(null);
+      const [activeFile, setActiveFile] = useState('all');
 
-      const stats = useMemo(() => {
-        const totalCount = uploadedTxns.length;
-        const flagged = uploadedTxns.filter(t => t.needsReview).length;
-        const deductions = uploadedTxns
-          .filter(t => CATEGORIES[t.category]?.group === 'work')
-          .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
-        const minDate = uploadedTxns.reduce((m, t) => !m || t.date < m ? t.date : m, null);
-        const maxDate = uploadedTxns.reduce((m, t) => !m || t.date > m ? t.date : m, null);
-        return { totalCount, flagged, deductions, minDate, maxDate };
+      // Gather the unique source files for tab filter
+      const fileTabs = useMemo(() => {
+        const files = new Map();
+        files.set('all', { key: 'all', label: 'All', count: uploadedTxns.length });
+        uploadedTxns.forEach(t => {
+          if (!t.sourceFile) return;
+          const short = shortenFileName(t.sourceFile);
+          const existing = files.get(t.sourceFile) || { key: t.sourceFile, label: short, count: 0 };
+          existing.count += 1;
+          files.set(t.sourceFile, existing);
+        });
+        return Array.from(files.values());
       }, [uploadedTxns]);
 
+      const filteredTxns = useMemo(() => {
+        if (activeFile === 'all') return uploadedTxns;
+        return uploadedTxns.filter(t => t.sourceFile === activeFile);
+      }, [uploadedTxns, activeFile]);
+
+      const stats = useMemo(() => {
+        const totalCount = filteredTxns.length;
+        const flagged = filteredTxns.filter(t => t.needsReview).length;
+        const deductions = filteredTxns
+          .filter(t => CATEGORIES[t.category]?.group === 'work')
+          .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+        const spend = filteredTxns
+          .filter(t => t.amount < 0 && CATEGORIES[t.category]?.group !== 'system')
+          .reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+        const minDate = filteredTxns.reduce((m, t) => !m || t.date < m ? t.date : m, null);
+        const maxDate = filteredTxns.reduce((m, t) => !m || t.date > m ? t.date : m, null);
+        const monthsSpan = (() => {
+          if (!minDate || !maxDate) return 1;
+          const ms = new Date(maxDate) - new Date(minDate);
+          return Math.max(1, ms / (1000 * 60 * 60 * 24 * 30));
+        })();
+        const avgMonthly = spend / monthsSpan;
+        return { totalCount, flagged, deductions, avgMonthly, minDate, maxDate };
+      }, [filteredTxns]);
+
       const [showAll, setShowAll] = useState(false);
-      const visibleTxns = showAll ? uploadedTxns : uploadedTxns.slice(0, 5);
+      const visibleTxns = showAll ? filteredTxns : filteredTxns.slice(0, 5);
 
       const confirmAll = () => {
         const confirmed = uploadedTxns.map(t => ({ ...t, userConfirmed: true, needsReview: false }));
@@ -1878,18 +2818,45 @@
             <button className="header-btn" aria-label="More"><Icon name="more" /></button>
           </div>
 
-          <div className="flex justify-center mb-5">
+          <div className="flex justify-center mb-4">
             <div className="pill">
               <span className="pill-check"><Icon name="check" size={10} stroke={3} /></span>
-              Categorised {stats.totalCount} of {stats.totalCount} transactions
+              Categorised {uploadedTxns.length} of {uploadedTxns.length} transactions
             </div>
           </div>
 
+          {/* File tabs — only show if >1 source file */}
+          {fileTabs.length > 2 && (
+            <div className="flex gap-2 mb-4" style={{overflowX: 'auto', paddingBottom: 4}}>
+              {fileTabs.map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveFile(tab.key)}
+                  className={`chip ${activeFile === tab.key ? 'chip-active' : ''}`}
+                  style={{flexShrink: 0}}
+                >
+                  {tab.label} <span className="t-muted">({tab.count})</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Dual-hero card: deductions + avg monthly spend */}
           <div className="card-hero mb-6">
-            <div className="t-small t-secondary mb-2">Tax deductions found</div>
-            <div className="t-hero"><CountUp target={stats.deductions} /></div>
-            <div className="t-small t-muted mt-3">
-              {uploadMeta ? uploadMeta.name : 'Statement'} · {dateRange || 'This period'}
+            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16}}>
+              <div>
+                <div className="t-small t-secondary mb-1">Tax deductions found</div>
+                <div className="t-hero" style={{fontSize: '2.25rem'}}><CountUp target={stats.deductions} /></div>
+              </div>
+              <div style={{borderLeft: '1px solid var(--border-faint)', paddingLeft: 16}}>
+                <div className="t-small t-secondary mb-1">Avg monthly spend</div>
+                <div className="t-hero" style={{fontSize: '2.25rem', color: 'var(--text-primary)'}}><CountUp target={stats.avgMonthly} /></div>
+              </div>
+            </div>
+            <div className="t-small t-muted mt-4">
+              {uploadMeta?.files?.length > 0
+                ? `${uploadMeta.files.length} file${uploadMeta.files.length === 1 ? '' : 's'} · ${dateRange || 'This period'}`
+                : `Demo data · ${dateRange || 'Last 3 months'}`}
             </div>
           </div>
 
@@ -1952,39 +2919,152 @@
       );
     }
 
-    /* ===== Screen 6 — Deduction prompts ===== */
+    /**
+     * inferFromTransactions — the AI pre-fill engine (spec §4 Screen 8).
+     *
+     * Scans the transaction pool and returns what we can auto-fill for the deduction
+     * prompts: phone bill, rent, electricity, fuel, internet, medical aid, RA, insurance.
+     *
+     * The returned shape is designed to drop straight into the deduction-setup inputs.
+     */
+    function inferFromTransactions(txns) {
+      if (!txns || !txns.length) return {};
+      const out = {};
+
+      // Match merchants against a rule set — returns the monthly spend (if recurring).
+      const rules = [
+        { key: 'phoneBill',     rx: /vodacom|cell c|mtn\b|telkom mobile/i },
+        { key: 'fibre',         rx: /mweb|afrihost|rain fibre|cool ideas|webafrica|home fibre/i },
+        { key: 'rent',          rx: /rental|landlord|property24|body corporate levy/i, excludeRx: /car rental|hertz|avis/i },
+        { key: 'electricity',   rx: /eskom|prepaid electric|municipal|city of cape town/i },
+        { key: 'medical',       rx: /discovery health|momentum health|bonitas|medihelp|fedhealth/i },
+        { key: 'retirement',    rx: /retirement annuity|\bra\b.*annuity|sanlam.*ra|old mutual.*ra|allan gray.*ra/i },
+        { key: 'indemnity',     rx: /professional indemnity|indemnity insurance/i },
+      ];
+
+      for (const rule of rules) {
+        const matching = txns.filter(t => rule.rx.test(t.description) && (!rule.excludeRx || !rule.excludeRx.test(t.description)));
+        if (!matching.length) continue;
+        // Group by month
+        const byMonth = {};
+        matching.forEach(t => {
+          const m = (t.date || '').slice(0, 7);
+          byMonth[m] = (byMonth[m] || 0) + Math.abs(t.amount || 0);
+        });
+        const monthKeys = Object.keys(byMonth);
+        if (!monthKeys.length) continue;
+        const avg = monthKeys.reduce((s, k) => s + byMonth[k], 0) / monthKeys.length;
+        const sample = matching[0].description;
+        out[rule.key] = { monthlyAmount: Math.round(avg), merchant: sample };
+      }
+
+      // Fuel is variable — use the total/months span
+      const fuel = txns.filter(t => /fuel|petrol|diesel|engen|sasol|shell|bp\b|caltex/i.test(t.description));
+      if (fuel.length) {
+        const total = fuel.reduce((s, t) => s + Math.abs(t.amount || 0), 0);
+        const months = new Set(fuel.map(t => (t.date || '').slice(0, 7))).size || 1;
+        out.fuel = { monthlyAmount: Math.round(total / months), merchant: fuel[0].description };
+      }
+
+      // Equipment spend this period — surface as a prompt (not a pre-fill)
+      const equipment = txns.filter(t => t.category === 'equipment' && Math.abs(t.amount || 0) > 500);
+      if (equipment.length) {
+        out.equipmentItems = equipment.slice(0, 3).map(t => ({ description: t.description, amount: Math.abs(t.amount) }));
+      }
+
+      return out;
+    }
+
+    /* ===== Screen 8 — Smart deduction prompts (v5: AI-inferred pre-fills) ===== */
     function ScreenDeductionPrompts({ setStep }) {
-      const { state, dispatch } = useData();
+      const { state } = useData();
       const [index, setIndex] = useState(0);
 
       const txns = state.transactions;
-      // Detect prompts
-      const prompts = [];
-      const has = (cat) => txns.some(t => t.category === cat);
-      if (has('home_office') || txns.some(t => /eskom|electricity|rent|bond|fibre|internet/i.test(t.description))) {
-        prompts.push({
-          key: 'homeOffice',
-          title: 'Do you work from home?',
-          body: 'I noticed rent, electricity and internet in your statements. If part of your home is a dedicated workspace, you can deduct a percentage.',
-          setup: HomeOfficeQuickSetup,
-        });
-      }
-      if (has('vehicle_travel') || txns.some(t => /fuel|petrol|sasol|engen|shell|toll|parking|uber/i.test(t.description))) {
-        prompts.push({
-          key: 'travel',
-          title: 'Do you use your vehicle for work?',
-          body: 'I saw fuel and travel costs. Tracking what portion is for work means proper deductions at year-end.',
-          setup: TravelQuickSetup,
-        });
-      }
-      if (has('phone_internet') || txns.some(t => /vodacom|mtn|cell c|telkom/i.test(t.description))) {
-        prompts.push({
-          key: 'phone',
-          title: 'Is your phone partly for work?',
-          body: 'Your monthly cellular bill came through. What percentage is work-related?',
-          setup: PhoneQuickSetup,
-        });
-      }
+      const inferred = useMemo(() => inferFromTransactions(txns), [txns]);
+      const careerProfile = useMemo(() => matchCareerProfile(state.user.occupation), [state.user.occupation]);
+
+      // Build the prompt queue from inferred data (only show prompts we have evidence for)
+      const prompts = useMemo(() => {
+        const list = [];
+
+        if (inferred.rent || inferred.electricity || inferred.fibre) {
+          const items = [];
+          if (inferred.rent)        items.push(`rent about ${fmtZAR(inferred.rent.monthlyAmount)}/mo`);
+          if (inferred.electricity) items.push(`electricity ${fmtZAR(inferred.electricity.monthlyAmount)}/mo`);
+          if (inferred.fibre)       items.push(`fibre ${fmtZAR(inferred.fibre.monthlyAmount)}/mo`);
+          list.push({
+            key: 'homeOffice',
+            title: 'I see you might work from home.',
+            body: `Found ${items.join(', ')}. If part of your home is a dedicated workspace, you can deduct a percentage.`,
+            setup: HomeOfficeQuickSetup,
+            inferred,
+          });
+        }
+
+        if (inferred.fuel) {
+          list.push({
+            key: 'travel',
+            title: `I see about ${fmtZAR(inferred.fuel.monthlyAmount)}/month on fuel.`,
+            body: 'Do you use your car for work? Even partly qualifies for a deduction if you keep a logbook.',
+            setup: TravelQuickSetup,
+            inferred,
+          });
+        }
+
+        if (inferred.phoneBill) {
+          list.push({
+            key: 'phone',
+            title: `I see a ${fmtZAR(inferred.phoneBill.monthlyAmount)}/month phone bill.`,
+            body: `That's ${inferred.phoneBill.merchant}. Is this partly for work? I'll work out the deductible portion.`,
+            setup: PhoneQuickSetup,
+            inferred,
+          });
+        }
+
+        if (inferred.retirement) {
+          list.push({
+            key: 'retirement',
+            title: `I see an RA contribution — ${fmtZAR(inferred.retirement.monthlyAmount)}/month.`,
+            body: 'Retirement annuity contributions are tax-deductible up to 27.5% of your income, capped at R350,000/year.',
+            setup: RetirementQuickSetup,
+            inferred,
+          });
+        }
+
+        if (inferred.medical) {
+          list.push({
+            key: 'medical',
+            title: `I see medical aid — ${inferred.medical.merchant.replace(/\s+debit.*$/i, '')}.`,
+            body: 'Let me know your member details so I can work out your medical tax credits correctly.',
+            setup: MedicalQuickSetup,
+            inferred,
+          });
+        }
+
+        if (inferred.indemnity) {
+          list.push({
+            key: 'indemnity',
+            title: `I see a professional indemnity payment.`,
+            body: `${fmtZAR(inferred.indemnity.monthlyAmount)}/month — if this is for your work, it's fully deductible.`,
+            setup: ProfessionalQuickSetup,
+            inferred,
+          });
+        }
+
+        // Occupation-specific (spec §4 Screen 8): "For the photographer: Did you buy any camera equipment?"
+        if (careerProfile && inferred.equipmentItems) {
+          list.push({
+            key: 'occupation_equipment',
+            title: `Any ${careerProfile.name.toLowerCase()} equipment to claim?`,
+            body: `I spotted ${inferred.equipmentItems.map(i => i.description).slice(0, 2).join(', ')}. Want to set up equipment depreciation?`,
+            setup: EquipmentQuickSetup,
+            inferred,
+          });
+        }
+
+        return list;
+      }, [inferred, careerProfile]);
 
       const current = prompts[index];
       const done = () => setStep('budget');
@@ -1992,10 +3072,14 @@
       if (!current) {
         return (
           <div className="screen">
-            <div className="header"><div /><div /><div /></div>
+            <div className="header">
+              <button className="header-btn" onClick={() => setStep('review')} aria-label="Back"><Icon name="back" /></button>
+              <div />
+              <div />
+            </div>
             <h1 className="t-display mb-3">Anything else?</h1>
-            <p className="t-body t-secondary mb-6">You can set up more deductions later in the Tax tab. For now, let's build your budget.</p>
-            <button className="btn btn-primary" onClick={() => setStep('budget')}>Continue</button>
+            <p className="t-body t-secondary mb-6">You can set up more deductions later in Tax → Deductions. For now, let's build your budget.</p>
+            <button className="btn btn-primary" onClick={done}>Continue</button>
           </div>
         );
       }
@@ -2005,34 +3089,33 @@
       return (
         <div className="screen">
           <div className="header">
-            <button className="header-btn" onClick={() => setStep('review')} aria-label="Back"><Icon name="back" /></button>
+            <button className="header-btn" onClick={() => index > 0 ? setIndex(index - 1) : setStep('review')} aria-label="Back"><Icon name="back" /></button>
             <div className="t-small t-muted">Step {index + 1} of {prompts.length}</div>
             <button className="header-btn" onClick={done} aria-label="Skip all"><Icon name="close" /></button>
           </div>
 
-          <h1 className="t-display mb-3">{current.title}</h1>
+          <h1 className="t-display mb-3" style={{lineHeight: 1.25}}>{current.title}</h1>
           <p className="t-body t-secondary mb-6">{current.body}</p>
 
-          <SetupComp onDone={() => {
-            if (index + 1 < prompts.length) setIndex(index + 1);
-            else done();
-          }} onSkip={() => {
-            if (index + 1 < prompts.length) setIndex(index + 1);
-            else done();
-          }} />
+          <SetupComp
+            inferred={current.inferred}
+            onDone={() => { if (index + 1 < prompts.length) setIndex(index + 1); else done(); }}
+            onSkip={() => { if (index + 1 < prompts.length) setIndex(index + 1); else done(); }}
+          />
         </div>
       );
     }
 
-    function HomeOfficeQuickSetup({ onDone, onSkip }) {
+    function HomeOfficeQuickSetup({ onDone, onSkip, inferred }) {
       const { state, dispatch } = useData();
       const ho = state.taxProfile.homeOffice;
       const [show, setShow] = useState(false);
       const [ownsHome, setOwnsHome] = useState(ho.ownsHome || false);
       const [percentage, setPercentage] = useState(ho.percentage || 10);
-      const [rent, setRent] = useState(ho.monthlyRent || 0);
-      const [elec, setElec] = useState(ho.monthlyElectricity || 0);
-      const [internet, setInternet] = useState(ho.monthlyInternet || 0);
+      // v5: pre-fill from inferred statement data
+      const [rent, setRent] = useState(ho.monthlyRent || inferred?.rent?.monthlyAmount || 0);
+      const [elec, setElec] = useState(ho.monthlyElectricity || inferred?.electricity?.monthlyAmount || 0);
+      const [internet, setInternet] = useState(ho.monthlyInternet || inferred?.fibre?.monthlyAmount || 0);
 
       const save = () => {
         dispatch({ type: 'PATCH_PROFILE', payload: {
@@ -2096,13 +3179,14 @@
       );
     }
 
-    function TravelQuickSetup({ onDone, onSkip }) {
+    function TravelQuickSetup({ onDone, onSkip, inferred }) {
       const { state, dispatch } = useData();
       const tr = state.taxProfile.travel;
       const [show, setShow] = useState(false);
       const [hasLogbook, setHasLogbook] = useState(tr.hasLogbook || false);
       const [workPct, setWorkPct] = useState(tr.workPercentage || 30);
-      const [fuel, setFuel] = useState(tr.monthlyFuel || 0);
+      // v5: pre-fill monthly fuel from inferred
+      const [fuel, setFuel] = useState(tr.monthlyFuel || inferred?.fuel?.monthlyAmount || 0);
 
       const save = () => {
         dispatch({ type: 'PATCH_PROFILE', payload: {
@@ -2146,12 +3230,13 @@
       );
     }
 
-    function PhoneQuickSetup({ onDone, onSkip }) {
+    function PhoneQuickSetup({ onDone, onSkip, inferred }) {
       const { state, dispatch } = useData();
       const ph = state.taxProfile.phone;
       const [show, setShow] = useState(false);
       const [workPct, setWorkPct] = useState(ph.workPercentage || 50);
-      const [bill, setBill] = useState(ph.monthlyBill || 0);
+      // v5: pre-fill monthly bill from inferred phoneBill
+      const [bill, setBill] = useState(ph.monthlyBill || inferred?.phoneBill?.monthlyAmount || 0);
       const save = () => {
         dispatch({ type: 'PATCH_PROFILE', payload: { phone: { enabled: true, workPercentage: workPct, monthlyBill: bill }}});
         onDone();
@@ -2173,10 +3258,147 @@
           <div>
             <label className="input-label">Monthly phone bill</label>
             <CurrencyInput value={bill} onChange={setBill} />
+            {inferred?.phoneBill && <p className="t-small t-muted mt-2">Pre-filled from what I saw on your statements.</p>}
           </div>
           <div className="flex gap-3 mt-3">
             <button className="btn btn-ghost" onClick={onSkip}>Skip</button>
             <button className="btn btn-primary" onClick={save}>Save</button>
+          </div>
+        </div>
+      );
+    }
+
+    /* v5 additions — new quick-setup components for AI-inferred prompts */
+
+    function RetirementQuickSetup({ onDone, onSkip, inferred }) {
+      const { dispatch } = useData();
+      const [show, setShow] = useState(false);
+      const [monthly, setMonthly] = useState(inferred?.retirement?.monthlyAmount || 0);
+      const save = () => {
+        dispatch({ type: 'PATCH_PROFILE', payload: { retirement: { enabled: true, monthlyRA: monthly }}});
+        onDone();
+      };
+      if (!show) return (
+        <div className="flex flex-col gap-3">
+          <button className="btn btn-primary" onClick={() => setShow(true)}>Yes, that's my RA</button>
+          <button className="btn btn-ghost" onClick={onSkip}>No, just savings</button>
+        </div>
+      );
+      return (
+        <div className="flex flex-col gap-5">
+          <div>
+            <label className="input-label">Monthly RA contribution</label>
+            <CurrencyInput value={monthly} onChange={setMonthly} />
+          </div>
+          <div className="flex gap-3 mt-3">
+            <button className="btn btn-ghost" onClick={onSkip}>Skip</button>
+            <button className="btn btn-primary" onClick={save}>Save</button>
+          </div>
+        </div>
+      );
+    }
+
+    function MedicalQuickSetup({ onDone, onSkip }) {
+      const { dispatch } = useData();
+      const [show, setShow] = useState(false);
+      const [members, setMembers] = useState(1);
+      const [dependents, setDependents] = useState(0);
+      const save = () => {
+        dispatch({ type: 'PATCH_PROFILE', payload: { medical: { enabled: true, members, dependents, hasOOP: false, oopAmount: 0 }}});
+        onDone();
+      };
+      if (!show) return (
+        <div className="flex flex-col gap-3">
+          <button className="btn btn-primary" onClick={() => setShow(true)}>Set up</button>
+          <button className="btn btn-ghost" onClick={onSkip}>Skip</button>
+        </div>
+      );
+      return (
+        <div className="flex flex-col gap-5">
+          <div>
+            <label className="input-label">How many members on your medical aid?</label>
+            <input className="input" type="number" min={1} value={members} onChange={e => setMembers(parseInt(e.target.value) || 1)} />
+          </div>
+          <div>
+            <label className="input-label">How many additional dependents?</label>
+            <input className="input" type="number" min={0} value={dependents} onChange={e => setDependents(parseInt(e.target.value) || 0)} />
+          </div>
+          <div className="flex gap-3 mt-3">
+            <button className="btn btn-ghost" onClick={onSkip}>Skip</button>
+            <button className="btn btn-primary" onClick={save}>Save</button>
+          </div>
+        </div>
+      );
+    }
+
+    function ProfessionalQuickSetup({ onDone, onSkip, inferred }) {
+      const { state, dispatch } = useData();
+      const [show, setShow] = useState(false);
+      const [amount, setAmount] = useState((inferred?.indemnity?.monthlyAmount || 0) * 12);
+      const save = () => {
+        const items = [...(state.taxProfile.professionalFees?.items || [])];
+        items.push({ id: uid('item'), name: 'Professional indemnity insurance', annualAmount: amount });
+        dispatch({ type: 'PATCH_PROFILE', payload: { professionalFees: { enabled: true, items }}});
+        onDone();
+      };
+      if (!show) return (
+        <div className="flex flex-col gap-3">
+          <button className="btn btn-primary" onClick={() => setShow(true)}>Yes, for work</button>
+          <button className="btn btn-ghost" onClick={onSkip}>No, personal</button>
+        </div>
+      );
+      return (
+        <div className="flex flex-col gap-5">
+          <div>
+            <label className="input-label">Annual premium</label>
+            <CurrencyInput value={amount} onChange={setAmount} />
+          </div>
+          <div className="flex gap-3 mt-3">
+            <button className="btn btn-ghost" onClick={onSkip}>Skip</button>
+            <button className="btn btn-primary" onClick={save}>Save</button>
+          </div>
+        </div>
+      );
+    }
+
+    function EquipmentQuickSetup({ onDone, onSkip, inferred }) {
+      const { state, dispatch } = useData();
+      const [show, setShow] = useState(false);
+      const [selected, setSelected] = useState(
+        Object.fromEntries((inferred?.equipmentItems || []).map(i => [i.description, true]))
+      );
+      const save = () => {
+        const existing = state.taxProfile.equipment?.items || [];
+        const toAdd = (inferred?.equipmentItems || [])
+          .filter(i => selected[i.description])
+          .map(i => ({ id: uid('item'), name: i.description, cost: i.amount, years: 3, workPct: 100 }));
+        dispatch({ type: 'PATCH_PROFILE', payload: { equipment: { enabled: true, items: [...existing, ...toAdd] }}});
+        onDone();
+      };
+      if (!show) return (
+        <div className="flex flex-col gap-3">
+          <button className="btn btn-primary" onClick={() => setShow(true)}>Yes, claim them</button>
+          <button className="btn btn-ghost" onClick={onSkip}>Not now</button>
+        </div>
+      );
+      return (
+        <div className="flex flex-col gap-3">
+          {(inferred?.equipmentItems || []).map((i, idx) => (
+            <button
+              key={idx}
+              onClick={() => setSelected(s => ({...s, [i.description]: !s[i.description]}))}
+              className={`checkbox ${selected[i.description] ? 'checked' : ''}`}
+            >
+              <div className="checkbox-box">{selected[i.description] && <Icon name="check" size={14} stroke={3} />}</div>
+              <div style={{flex: 1, textAlign: 'left'}}>
+                <div className="t-body">{i.description}</div>
+                <div className="t-small t-muted">{fmtZAR(i.amount)}</div>
+              </div>
+            </button>
+          ))}
+          <div className="flex gap-3 mt-3">
+            <button className="btn btn-ghost" onClick={onSkip}>Skip</button>
+            <button className="btn btn-primary" onClick={save}>Add these</button>
           </div>
         </div>
       );
@@ -2451,6 +3673,10 @@
       const [compliancePurpose, setCompliancePurpose] = useState('');
       const isClientEnt = category === 'client_entertainment';
       const isDeductible = CATEGORIES[category]?.group === 'work';
+      // v5 fix: inline tax-year warning when date is outside active year
+      const impliedYear = useMemo(() => taxYearForDate(date), [date]);
+      const activeYear = state.settings.activeTaxYear;
+      const taxYearMismatch = impliedYear !== activeYear;
 
       const save = () => {
         if (!description || !amount) { showToast('Description and amount needed.', 'error'); return; }
@@ -2489,6 +3715,17 @@
             <div>
               <label className="input-label">Date</label>
               <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+              {taxYearMismatch && (
+                <div className="card mt-2" style={{background: 'var(--amber-dim)', borderColor: 'rgba(245,158,11,0.3)', padding: 12}}>
+                  <div className="flex items-start gap-2">
+                    <Icon name="warning" size={14} />
+                    <div>
+                      <div className="t-small t-amber" style={{fontWeight: 600}}>This falls in {impliedYear}</div>
+                      <div className="t-small t-secondary">Your active year is {activeYear}. I'll route this to {impliedYear} when you save.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <label className="input-label">Description</label>
@@ -2541,21 +3778,68 @@
       );
     }
 
+    /** File/camera upload from the + menu. Camera mode routes to line-item OCR. */
     function FileAddSheet({ mode, onClose }) {
-      const { dispatch, showToast } = useData();
+      const { state, dispatch, showToast } = useData();
       const inputRef = useRef(null);
       const [busy, setBusy] = useState(false);
+      const [receiptData, setReceiptData] = useState(null);  // set after /api/extract-receipt
+      const [receiptImage, setReceiptImage] = useState(null);
 
       useEffect(() => { inputRef.current?.click(); }, []);
 
       const handleFiles = async (files) => {
         if (!files?.length) { onClose(); return; }
         setBusy(true);
+        const file = files[0];
+        const context = aiContextFrom(state);
+        const skipAi = state.settings?.skipAiProcessing;
+
         try {
-          const file = files[0];
-          let rows = [];
-          if (/\.csv$/i.test(file.name)) rows = await parseCSV(file);
-          const results = rows.length ? await categoriseBatch(rows) : [];
+          if (mode === 'camera') {
+            // CAMERA / RECEIPT SCAN — route through /api/extract-receipt for line items
+            if (skipAi) {
+              showToast('Skip AI is on — receipt OCR needs AI. Add manually instead.', 'error');
+              setBusy(false); onClose(); return;
+            }
+            const base64 = await fileToBase64(file);
+            setReceiptImage({ base64, mimeType: file.type || 'image/jpeg' });
+            const receipt = await extractReceipt(file, { context });
+            if (receipt.error === 'unreadable') {
+              showToast('Could not read that receipt. Try better lighting.', 'error');
+              setBusy(false); onClose(); return;
+            }
+            setReceiptData(receipt);
+            setBusy(false);
+            // The ReceiptReviewSheet below renders instead of closing
+            return;
+          }
+
+          // UPLOAD mode — multi-file or statement flow
+          const fileList = Array.from(files);
+          let results = [];
+          for (const f of fileList) {
+            if (/\.csv$/i.test(f.name)) {
+              const rows = await parseCSV(f);
+              const cat = await categoriseBatch(rows, { context, skipAi });
+              cat.forEach(r => { r._sourceFile = f.name; });
+              results = results.concat(cat);
+            } else if (/\.(pdf|png|jpe?g|webp|heic)$/i.test(f.name)) {
+              if (skipAi) {
+                showToast('Skip AI is on — PDFs need AI. Use CSV export.', 'error');
+                continue;
+              }
+              const cat = await categoriseFile(f, { context });
+              cat.forEach(r => { r._sourceFile = f.name; });
+              results = results.concat(cat);
+            } else {
+              showToast(`${f.name}: unsupported`, 'error');
+            }
+          }
+
+          // Deduplicate against existing transactions (spec §5.5)
+          results = dedupAgainstExisting(results, state.transactions);
+
           const txns = results.map(r => ({
             id: uid('txn'),
             accountId: 'acc_main',
@@ -2563,25 +3847,35 @@
             description: r.description,
             amount: r.amount,
             category: r.category || 'uncategorised',
-            source: mode === 'camera' ? 'receipt_scan' : 'ai',
+            source: 'ai',
             confidence: r.confidence ?? 0.9,
             needsReview: r.needsReview ?? false,
             userConfirmed: false,
             isDeductible: CATEGORIES[r.category]?.group === 'work',
             complianceNote: null,
             taxYear: taxYearForDate(r.date || new Date().toISOString().slice(0, 10)),
-            receiptAttached: mode === 'camera',
+            receiptAttached: false,
+            sourceFile: r._sourceFile || null,
+            receiptId: null,
+            subcategoryBreakdown: null,
             createdAt: new Date().toISOString(),
           })).filter(t => t.category !== 'ignore');
           dispatch({ type: 'ADD_TXNS', payload: txns });
-          showToast(`Added ${txns.length} transactions.`, 'success');
+          showToast(`Added ${plural(txns.length, 'transaction')}.`, 'success');
+          setBusy(false);
+          onClose();
         } catch (err) {
           console.error(err);
-          showToast('Could not read file.', 'error');
+          showToast('Could not read file: ' + err.message, 'error');
+          setBusy(false);
+          onClose();
         }
-        setBusy(false);
-        onClose();
       };
+
+      // If we're showing the receipt review screen, don't render a dummy file input
+      if (receiptData) {
+        return <ReceiptReviewSheet receipt={receiptData} image={receiptImage} onClose={onClose} />;
+      }
 
       return (
         <>
@@ -2595,10 +3889,182 @@
           />
           {busy && (
             <Sheet open={true} onClose={() => {}}>
-              <p className="text-center t-body py-4">Reading file…</p>
+              <div className="flex flex-col items-center gap-3 py-4">
+                <div className="tjommie tjommie-pulse">TT</div>
+                <p className="t-body t-secondary">{mode === 'camera' ? 'Reading your receipt…' : 'Processing file…'}</p>
+              </div>
             </Sheet>
           )}
         </>
+      );
+    }
+
+    /** Deduplicate newly-added rows against existing transactions (spec §5.5). */
+    function dedupAgainstExisting(rows, existing) {
+      if (!existing?.length) return rows;
+      const existingKeys = new Set(existing.map(t => [
+        (t.date || '').slice(0, 10),
+        Math.round(Math.abs(t.amount || 0) * 100),
+        (t.description || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean).slice(0, 4).join(' '),
+      ].join('|')));
+
+      return rows.filter(r => {
+        const key = [
+          (r.date || '').slice(0, 10),
+          Math.round(Math.abs(r.amount || 0) * 100),
+          (r.description || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean).slice(0, 4).join(' '),
+        ].join('|');
+        return !existingKeys.has(key);
+      });
+    }
+
+    /* ===== Receipt review sheet — line-item OCR output (spec §5.3) =====
+       Shows extracted merchant, total, line items grouped by sub-category.
+       If the AI flagged it as client entertainment, prompts for who/why.
+    */
+    function ReceiptReviewSheet({ receipt, image, onClose }) {
+      const { state, dispatch, showToast } = useData();
+      const [isClientEnt, setIsClientEnt] = useState(receipt.isLikelyClientEntertainment || false);
+      const [who, setWho] = useState('');
+      const [purpose, setPurpose] = useState('');
+      const [showItems, setShowItems] = useState(false);
+      const [category, setCategory] = useState(isClientEnt ? 'client_entertainment' : (receipt.suggestedCategory || 'other_personal'));
+
+      // Group line items by subCategory for the summary view
+      const bySub = useMemo(() => {
+        const out = {};
+        for (const li of receipt.lineItems || []) {
+          const k = li.subCategory || 'other';
+          out[k] = (out[k] || 0) + Math.abs(li.amount || 0);
+        }
+        return out;
+      }, [receipt]);
+
+      const save = async () => {
+        const txnId = uid('txn');
+        const total = Math.abs(receipt.total || (receipt.lineItems || []).reduce((s, li) => s + Math.abs(li.amount || 0), 0));
+        const compliance = isClientEnt && who && purpose
+          ? `Compliance note saved: met with ${who} for ${purpose}.`
+          : null;
+
+        // Save image to IndexedDB
+        let receiptId = null;
+        if (image) {
+          receiptId = await saveReceiptImage(txnId, image.base64, image.mimeType);
+        }
+
+        const txn = {
+          id: txnId,
+          accountId: 'acc_main',
+          date: receipt.date || new Date().toISOString().slice(0, 10),
+          description: receipt.merchant,
+          amount: -total,
+          category,
+          source: 'receipt_scan',
+          confidence: receipt.confidence ?? 0.9,
+          needsReview: false,
+          userConfirmed: true,
+          isDeductible: CATEGORIES[category]?.group === 'work',
+          complianceNote: compliance,
+          taxYear: taxYearForDate(receipt.date || new Date().toISOString().slice(0, 10)),
+          receiptAttached: true,
+          sourceFile: null,
+          receiptId,
+          // This is the magic — sub-category breakdown feeds Budget tab drill-down
+          subcategoryBreakdown: bySub,
+          createdAt: new Date().toISOString(),
+        };
+
+        if (txn.taxYear !== state.settings.activeTaxYear) {
+          showToast(`Logged to ${txn.taxYear} tax year (based on date).`);
+        } else {
+          showToast('Receipt saved.', 'success');
+        }
+        dispatch({ type: 'ADD_TXNS', payload: [txn] });
+        onClose();
+      };
+
+      return (
+        <Sheet open={true} onClose={onClose} title="Review receipt">
+          <div className="flex flex-col gap-4">
+            <div>
+              <div className="t-small t-secondary">{fmtDateUpper(receipt.date)}</div>
+              <div className="t-h1">{receipt.merchant}</div>
+              <div className="t-hero" style={{fontSize: '2rem', marginTop: 4}}>{fmtZAR(Math.abs(receipt.total || 0))}</div>
+            </div>
+
+            {isClientEnt && (
+              <div className="card" style={{background: 'var(--teal-dim)', borderColor: 'var(--border-teal)'}}>
+                <div className="t-small t-teal mb-2" style={{fontWeight: 600}}>Client entertainment</div>
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="input-label">Who did you meet? <span className="t-muted">(SARS requires this)</span></label>
+                    <input className="input" value={who} onChange={e => setWho(e.target.value)} placeholder="e.g. John Smith, Acme Corp" />
+                  </div>
+                  <div>
+                    <label className="input-label">Business purpose</label>
+                    <input className="input" value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="e.g. Pitched Q2 retainer" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <button className={`checkbox ${isClientEnt ? 'checked' : ''}`} onClick={() => { setIsClientEnt(x => !x); setCategory(isClientEnt ? (receipt.suggestedCategory || 'eating_out') : 'client_entertainment'); }}>
+              <div className="checkbox-box">{isClientEnt && <Icon name="check" size={14} stroke={3} />}</div>
+              <span className="t-body">This was a client meeting</span>
+            </button>
+
+            {receipt.lineItems?.length > 0 && (
+              <div className="card">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="t-body" style={{fontWeight: 600}}>Line items ({receipt.lineItems.length})</div>
+                    <div className="t-small t-muted">Grouped by type</div>
+                  </div>
+                  <button className="btn-link" onClick={() => setShowItems(x => !x)} style={{padding: '4px 8px'}}>
+                    {showItems ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                {/* Summary view: sub-category totals */}
+                {!showItems && (
+                  <div className="flex flex-col gap-2">
+                    {Object.entries(bySub).sort(([,a],[,b]) => b-a).map(([sub, amt]) => (
+                      <div key={sub} className="flex justify-between t-small">
+                        <span className="t-secondary" style={{textTransform: 'capitalize'}}>{sub}</span>
+                        <span className="t-tabular">{fmtZAR(amt)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {/* Detailed view: each line item */}
+                {showItems && (
+                  <div className="flex flex-col gap-2">
+                    {receipt.lineItems.map((li, i) => (
+                      <div key={i} className="flex justify-between t-small">
+                        <span className="t-secondary" style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 8, flex: 1}}>{li.description}</span>
+                        <span className="t-tabular">{fmtZAR(li.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label className="input-label">Category</label>
+              <select className="input" value={category} onChange={e => setCategory(e.target.value)}>
+                <optgroup label="Work / Business">
+                  {WORK_CAT_KEYS.map(k => <option key={k} value={k}>{CATEGORIES[k].label}</option>)}
+                </optgroup>
+                <optgroup label="Personal">
+                  {PERSONAL_CAT_KEYS.map(k => <option key={k} value={k}>{CATEGORIES[k].label}</option>)}
+                </optgroup>
+              </select>
+            </div>
+
+            <button className="btn btn-primary" onClick={save}>Save receipt</button>
+          </div>
+        </Sheet>
       );
     }
 
@@ -2638,11 +4104,27 @@
             </div>
           </div>
 
-          <div className="card-hero mb-4">
-            <div className="t-small t-secondary mb-2">Tax deductions YTD</div>
-            <div className="t-hero"><CountUp target={ytdDeductions} /></div>
-            <div className="t-small t-muted mt-3">Saving you ~{fmtZAR(taxSavings)} in tax</div>
-          </div>
+          {/* Skip-AI banner (AI_AND_PRIVACY.md §6) */}
+          {state.settings.skipAiProcessing && (
+            <div className="card mb-4" style={{background: 'var(--amber-dim)', borderColor: 'rgba(245,158,11,0.3)', padding: 12}}>
+              <div className="flex items-center gap-2">
+                <Icon name="warning" size={14} />
+                <div className="t-small" style={{flex: 1}}>AI is off. Categorisation is reduced.</div>
+                <button className="btn-link" onClick={openSettings} style={{padding: '2px 8px'}}>Re-enable</button>
+              </div>
+            </div>
+          )}
+
+          {/* User-type-adaptive hero card */}
+          {state.user.userType === 'salaried' ? (
+            <SalariedRefundCard estimate={estimate} />
+          ) : (
+            <div className="card-hero mb-4">
+              <div className="t-small t-secondary mb-2">Tax deductions YTD</div>
+              <div className="t-hero"><CountUp target={ytdDeductions} /></div>
+              <div className="t-small t-muted mt-3">Saving you ~{fmtZAR(taxSavings)} in tax</div>
+            </div>
+          )}
 
           <div className="card mb-4">
             <div className="flex items-center justify-between mb-3">
@@ -2655,7 +4137,8 @@
             <div className="t-small t-muted">{budgetPct >= 1 ? 'Over budget this month.' : budgetPct >= 0.8 ? 'Watching the edge.' : 'On track.'}</div>
           </div>
 
-          {state.user.userType === 'sole_prop' && <ProvCard />}
+          {/* Provisional tax card — only for provisional taxpayer types (spec §6) */}
+          {PROV_TAXPAYER_TYPES.has(state.user.userType) && <ProvCard />}
 
           {topGoal && (
             <div className="card mb-4">
@@ -2669,10 +4152,40 @@
             </div>
           )}
 
-          <div className="card" style={{background: 'rgba(20,184,166,0.04)'}}>
-            <div className="t-small t-muted mb-1">Note for sole proprietors</div>
-            <p className="t-small t-secondary" style={{lineHeight: 1.55}}>As a freelancer without employees, you are generally exempt from UIF, SDL, and COIDA contributions. If you hire staff (even part-time), you must register and these become deductible expenses.</p>
-          </div>
+          {/* User-type-specific note */}
+          {state.user.userType === 'freelancer' && (
+            <div className="card" style={{background: 'rgba(20,184,166,0.04)'}}>
+              <div className="t-small t-muted mb-1">Note for sole proprietors</div>
+              <p className="t-small t-secondary" style={{lineHeight: 1.55}}>As a freelancer without employees, you are generally exempt from UIF, SDL, and COIDA contributions. If you hire staff (even part-time), you must register and these become deductible expenses.</p>
+            </div>
+          )}
+          {state.user.userType === 'small_business' && (
+            <div className="card" style={{background: 'rgba(20,184,166,0.04)'}}>
+              <div className="t-small t-muted mb-1">SME features coming soon</div>
+              <p className="t-small t-secondary" style={{lineHeight: 1.55}}>Multi-account support, VAT-aware categorisation, and simple P&L are in progress. For now, this works like a sole-prop setup.</p>
+            </div>
+          )}
+          {state.user.userType === 'retired' && (
+            <div className="card" style={{background: 'rgba(20,184,166,0.04)'}}>
+              <div className="t-small t-muted mb-1">For pensioners</div>
+              <p className="t-small t-secondary" style={{lineHeight: 1.55}}>Your age 65+ rebate (R9,444) and, if applicable, age 75+ tertiary rebate (R3,145) are applied automatically. Interest exemption rises to R34,500.</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /** Hero card for salaried users — focuses on refund estimate, not deductions-owed (spec §6.1). */
+    function SalariedRefundCard({ estimate }) {
+      // Rough refund estimate: if PAYE paid > net tax, the delta is refundable.
+      // We don't have PAYE actual, so assume the employer withheld standard PAYE on the gross
+      // and the deductions reduce taxable income → refund = savings from deductions.
+      const refund = estimate.savings;
+      return (
+        <div className="card-hero mb-4">
+          <div className="t-small t-secondary mb-2">Your estimated refund</div>
+          <div className="t-hero"><CountUp target={refund} /></div>
+          <div className="t-small t-muted mt-3">Based on {fmtZAR(estimate.totalDeductions)} in deductions</div>
         </div>
       );
     }
@@ -2698,9 +4211,13 @@
       );
     }
 
-    /* ===== TAX TAB ===== */
+    /* ===== TAX TAB (user-type adaptive — spec §6) ===== */
     function TaxTab() {
+      const { state } = useData();
+      const showProvisional = PROV_TAXPAYER_TYPES.has(state.user.userType);
       const [sub, setSub] = useState('summary');
+      // Guard against direct-link stale state
+      useEffect(() => { if (sub === 'provisional' && !showProvisional) setSub('summary'); }, [showProvisional, sub]);
       return (
         <div className="screen has-nav">
           <div className="header">
@@ -2711,7 +4228,9 @@
           <div className="flex gap-2 mb-5" style={{overflowX: 'auto'}}>
             <button className={`chip ${sub === 'summary' ? 'chip-active' : ''}`} onClick={() => setSub('summary')}>Summary</button>
             <button className={`chip ${sub === 'calculator' ? 'chip-active' : ''}`} onClick={() => setSub('calculator')}>Calculator</button>
-            <button className={`chip ${sub === 'provisional' ? 'chip-active' : ''}`} onClick={() => setSub('provisional')}>Provisional</button>
+            {showProvisional && (
+              <button className={`chip ${sub === 'provisional' ? 'chip-active' : ''}`} onClick={() => setSub('provisional')}>Provisional</button>
+            )}
             <button className={`chip ${sub === 'deductions' ? 'chip-active' : ''}`} onClick={() => setSub('deductions')}>Deductions</button>
           </div>
 
@@ -3177,6 +4696,7 @@
     }
 
     /* ===== BUDGET TAB ===== */
+    /* ===== BUDGET TAB (v5: sub-category drill-down + unusual-spending flag) ===== */
     function BudgetTab() {
       const { state } = useData();
       const [month] = useState(new Date().toISOString().slice(0, 7));
@@ -3186,6 +4706,33 @@
       const spentByCat = useMemo(() => {
         const m = {};
         state.transactions.filter(t => t.date?.startsWith(month) && t.amount < 0).forEach(t => {
+          m[t.category] = (m[t.category] || 0) + Math.abs(t.amount);
+        });
+        return m;
+      }, [state.transactions, month]);
+
+      /** Aggregate receipt-derived sub-category breakdowns per parent category.
+          e.g. groceries.meat = sum of all grocery receipts' meat sub-totals for this month. */
+      const subcategoryByCat = useMemo(() => {
+        const out = {};
+        state.transactions
+          .filter(t => t.date?.startsWith(month) && t.subcategoryBreakdown)
+          .forEach(t => {
+            const parent = t.category;
+            out[parent] = out[parent] || {};
+            for (const [sub, amt] of Object.entries(t.subcategoryBreakdown)) {
+              out[parent][sub] = (out[parent][sub] || 0) + amt;
+            }
+          });
+        return out;
+      }, [state.transactions, month]);
+
+      /** Last-month comparison — flags "unusual spending" when this month is >1.4x prior month */
+      const spentLastMonth = useMemo(() => {
+        const prev = new Date(month + '-01'); prev.setMonth(prev.getMonth() - 1);
+        const prevKey = prev.toISOString().slice(0, 7);
+        const m = {};
+        state.transactions.filter(t => t.date?.startsWith(prevKey) && t.amount < 0).forEach(t => {
           m[t.category] = (m[t.category] || 0) + Math.abs(t.amount);
         });
         return m;
@@ -3216,11 +4763,17 @@
                 const label = CATEGORIES[cat]?.label || cat;
                 const isOpen = expanded === cat;
                 const txnsInCat = state.transactions.filter(t => t.category === cat && t.date?.startsWith(month));
+                const lastMonthSpent = spentLastMonth[cat] || 0;
+                const jumped = lastMonthSpent > 0 && spent > lastMonthSpent * 1.4;
+                const subBreakdown = subcategoryByCat[cat];
                 return (
                   <div className="card" key={cat}>
                     <div className="flex items-center justify-between mb-2" onClick={() => setExpanded(isOpen ? null : cat)} style={{cursor: 'pointer'}}>
-                      <div>
-                        <div className="t-body" style={{fontWeight: 500}}>{label}</div>
+                      <div style={{flex: 1, minWidth: 0}}>
+                        <div className="flex items-center gap-2">
+                          <div className="t-body" style={{fontWeight: 500}}>{label}</div>
+                          {jumped && <span className="pill pill-amber" style={{padding: '2px 8px', fontSize: 10}}>Up {Math.round((spent/lastMonthSpent - 1) * 100)}%</span>}
+                        </div>
                         <div className="t-small t-muted">{fmtZAR(spent)} / {fmtZAR(budget)}</div>
                       </div>
                       <Icon name={isOpen ? 'chevron_up' : 'chevron_down'} size={16} />
@@ -3229,8 +4782,24 @@
                       <div className={`progress-bar-fill ${color}`} style={{width: `${Math.min(100, pct*100)}%`}}></div>
                     </div>
                     {isOpen && (
-                      <div className="mt-3 flex flex-col gap-2">
-                        {txnsInCat.length === 0 && <div className="t-small t-muted">No transactions this month.</div>}
+                      <div className="mt-3 flex flex-col gap-3">
+                        {/* Sub-category drill-down from receipt line items */}
+                        {subBreakdown && Object.keys(subBreakdown).length > 0 && (
+                          <div>
+                            <div className="t-micro mb-2">Inside {label.toLowerCase()}</div>
+                            <div className="flex flex-col gap-1">
+                              {Object.entries(subBreakdown).sort(([,a],[,b]) => b - a).map(([sub, amt]) => (
+                                <div key={sub} className="flex justify-between t-small py-1">
+                                  <span className="t-secondary" style={{textTransform: 'capitalize'}}>{sub.replace(/_/g, ' ')}</span>
+                                  <span className="t-tabular">{fmtZAR(amt)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="divider" style={{margin: '10px 0'}} />
+                          </div>
+                        )}
+                        <div className="t-micro">TRANSACTIONS THIS MONTH</div>
+                        {txnsInCat.length === 0 && <div className="t-small t-muted">No transactions.</div>}
                         {txnsInCat.map(t => (
                           <div className="flex justify-between t-small py-1" key={t.id}>
                             <span>{fmtDate(t.date)} · {t.description}</span>
@@ -3344,6 +4913,142 @@
     }
 
     /* ===== SETTINGS SHEET ===== */
+    /* ===== Privacy section — Skip AI toggle + privacy details link ===== */
+    function PrivacySection({ onShowModal }) {
+      const { state, dispatch, showToast } = useData();
+      const skipAi = !!state.settings.skipAiProcessing;
+
+      return (
+        <div className="flex flex-col gap-3">
+          <button className={`checkbox ${skipAi ? 'checked' : ''}`} onClick={() => {
+            const next = !skipAi;
+            dispatch({ type: 'PATCH_SETTINGS', payload: { skipAiProcessing: next }});
+            showToast(next ? 'AI categorisation disabled.' : 'AI categorisation re-enabled.', 'success');
+          }}>
+            <div className="checkbox-box">{skipAi && <Icon name="check" size={14} stroke={3} />}</div>
+            <div style={{flex: 1, textAlign: 'left'}}>
+              <div className="t-body" style={{fontWeight: 500}}>Skip AI processing</div>
+              <div className="t-small t-muted">Use local keyword categorisation only. No transactions leave your device.</div>
+            </div>
+          </button>
+
+          <button className="card txn-row" onClick={onShowModal}>
+            <div style={{gridColumn: '1 / -1'}}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="t-body" style={{fontWeight: 500}}>Privacy details</div>
+                  <div className="t-small t-muted">What we send, what stays local</div>
+                </div>
+                <Icon name="chevron_right" size={16} />
+              </div>
+            </div>
+          </button>
+
+          <div className="card" style={{padding: 16, background: 'var(--teal-dim)', borderColor: 'var(--border-teal)'}}>
+            <div className="t-small" style={{fontWeight: 600, marginBottom: 4}}>Proof we're not retaining</div>
+            <div className="t-small t-secondary">Open DevTools → Network tab → upload a statement. Inspect the request to <code style={{fontSize: 11, background: 'var(--bg-app)', padding: '1px 4px', borderRadius: 3}}>/api/categorise</code>. You'll see only date, description, amount — no account numbers. Every AI call sends <code style={{fontSize: 11, background: 'var(--bg-app)', padding: '1px 4px', borderRadius: 3}}>x-anthropic-zero-retention: true</code>.</div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ===== Backup section — encrypted export/import + Google Drive placeholder ===== */
+    function BackupSection() {
+      const { state, dispatch, showToast } = useData();
+      const [exportPass, setExportPass] = useState('');
+      const [importPass, setImportPass] = useState('');
+      const [pendingFile, setPendingFile] = useState(null);
+      const [busy, setBusy] = useState(false);
+
+      const exportEncrypted = async () => {
+        if (exportPass.length < 8) { showToast('Passphrase must be at least 8 characters.', 'error'); return; }
+        setBusy(true);
+        try {
+          const envelope = await encryptBackup(state, exportPass);
+          const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = `tax-tjommie-encrypted-${new Date().toISOString().slice(0,10)}.ttbackup`;
+          a.click(); URL.revokeObjectURL(url);
+          dispatch({ type: 'PATCH_SETTINGS', payload: { lastBackup: new Date().toISOString() }});
+          showToast('Encrypted backup downloaded.', 'success');
+          setExportPass('');
+        } catch (e) { showToast('Backup failed: ' + e.message, 'error'); }
+        setBusy(false);
+      };
+
+      const importEncrypted = async () => {
+        if (!pendingFile || importPass.length < 8) return;
+        setBusy(true);
+        try {
+          const text = await pendingFile.text();
+          const envelope = JSON.parse(text);
+          const restored = await decryptBackup(envelope, importPass);
+          dispatch({ type: 'SET', payload: restored });
+          dispatch({ type: 'PATCH_SETTINGS', payload: { lastImport: new Date().toISOString() }});
+          showToast('Backup restored.', 'success');
+          setImportPass(''); setPendingFile(null);
+        } catch (e) {
+          showToast(e.name === 'OperationError' ? 'Wrong passphrase.' : 'Restore failed.', 'error');
+        }
+        setBusy(false);
+      };
+
+      return (
+        <div className="flex flex-col gap-4">
+          {/* Google Drive placeholder — spec §5.2 scaffolded, not yet OAuth'd */}
+          <div className="card">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="t-body" style={{fontWeight: 500}}>Google Drive</div>
+                <div className="t-small t-muted">Auto-sync encrypted backups</div>
+              </div>
+              <div className="pill" style={{fontSize: 11}}>Coming soon</div>
+            </div>
+          </div>
+          <div className="card">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="t-body" style={{fontWeight: 500}}>iCloud Drive</div>
+                <div className="t-small t-muted">iOS only</div>
+              </div>
+              <div className="pill" style={{fontSize: 11}}>Coming soon</div>
+            </div>
+          </div>
+
+          <div className="divider" />
+
+          <div>
+            <div className="t-h2 mb-2">Encrypted manual backup</div>
+            <p className="t-small t-secondary mb-3">Download your data as an encrypted file. You'll need the same passphrase to restore it later. If you lose the passphrase, nobody can recover the data — not even us.</p>
+            <label className="input-label">Passphrase (≥ 8 characters)</label>
+            <input className="input mb-3" type="password" value={exportPass} onChange={e => setExportPass(e.target.value)} placeholder="A passphrase you'll remember" />
+            <button className="btn btn-ghost" disabled={busy || exportPass.length < 8} onClick={exportEncrypted}>
+              <Icon name="download" size={16} /> Download encrypted backup
+            </button>
+          </div>
+
+          <div className="divider" />
+
+          <div>
+            <div className="t-h2 mb-2">Restore from backup</div>
+            <p className="t-small t-secondary mb-3">Loads an encrypted .ttbackup file and decrypts it with your passphrase.</p>
+            <label className="btn btn-ghost mb-3" style={{cursor: 'pointer'}}>
+              <Icon name="upload" size={16} />
+              {pendingFile ? pendingFile.name : 'Choose .ttbackup file'}
+              <input type="file" accept=".ttbackup,.json" className="sr-only" onChange={e => setPendingFile(e.target.files?.[0])} />
+            </label>
+            {pendingFile && (
+              <>
+                <input className="input mb-3" type="password" value={importPass} onChange={e => setImportPass(e.target.value)} placeholder="Passphrase used to encrypt" />
+                <button className="btn btn-primary" disabled={busy || importPass.length < 8} onClick={importEncrypted}>Restore backup</button>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     function SettingsSheet({ onClose }) {
       const { state, dispatch, showToast } = useData();
       const [section, setSection] = useState('menu');
@@ -3385,36 +5090,24 @@
         location.reload();
       };
 
+      const SectionLink = ({ to, label }) => (
+        <button className="card txn-row" onClick={() => setSection(to)}>
+          <div style={{gridColumn: '1 / -1'}}>
+            <div className="flex items-center justify-between">
+              <span>{label}</span><Icon name="chevron_right" size={16} />
+            </div>
+          </div>
+        </button>
+      );
+
       const menu = (
         <div className="flex flex-col gap-2">
-          <button className="card txn-row" onClick={() => setSection('profile')}>
-            <div style={{gridColumn: '1 / -1'}}>
-              <div className="flex items-center justify-between">
-                <span>Profile</span><Icon name="chevron_right" size={16} />
-              </div>
-            </div>
-          </button>
-          <button className="card txn-row" onClick={() => setSection('accounts')}>
-            <div style={{gridColumn: '1 / -1'}}>
-              <div className="flex items-center justify-between">
-                <span>Accounts</span><Icon name="chevron_right" size={16} />
-              </div>
-            </div>
-          </button>
-          <button className="card txn-row" onClick={() => setSection('data')}>
-            <div style={{gridColumn: '1 / -1'}}>
-              <div className="flex items-center justify-between">
-                <span>Data & storage</span><Icon name="chevron_right" size={16} />
-              </div>
-            </div>
-          </button>
-          <button className="card txn-row" onClick={() => setSection('about')}>
-            <div style={{gridColumn: '1 / -1'}}>
-              <div className="flex items-center justify-between">
-                <span>About</span><Icon name="chevron_right" size={16} />
-              </div>
-            </div>
-          </button>
+          <SectionLink to="profile"  label="Profile" />
+          <SectionLink to="accounts" label="Accounts" />
+          <SectionLink to="privacy"  label="Privacy" />
+          <SectionLink to="backup"   label="Cloud backup" />
+          <SectionLink to="data"     label="Data & storage" />
+          <SectionLink to="about"    label="About" />
         </div>
       );
 
@@ -3425,7 +5118,13 @@
           <div className="flex flex-col gap-4">
             <div><label className="input-label">Name</label><input className="input" value={state.user.name} onChange={e => dispatch({ type: 'PATCH_USER', payload: { name: e.target.value }})} /></div>
             <div><label className="input-label">Email</label><input className="input" type="email" value={state.user.email || ''} onChange={e => dispatch({ type: 'PATCH_USER', payload: { email: e.target.value }})} /></div>
+            <div><label className="input-label">Occupation</label><input className="input" value={state.user.occupation || ''} onChange={e => dispatch({ type: 'PATCH_USER', payload: { occupation: e.target.value }})} placeholder="e.g. Photographer" /></div>
             <div><label className="input-label">Monthly income (before tax)</label><CurrencyInput value={state.user.monthlyGross} onChange={v => dispatch({ type: 'PATCH_USER', payload: { monthlyGross: v }})} /></div>
+            {state.user.userType === 'retired' && (
+              <div><label className="input-label">Age <span className="t-muted">(affects rebates)</span></label>
+                <input className="input" type="number" value={state.user.age || 65} onChange={e => dispatch({ type: 'PATCH_USER', payload: { age: parseInt(e.target.value) || 65 }})} />
+              </div>
+            )}
             <div><label className="input-label">Active tax year</label>
               <select className="input" value={state.user.taxYear} onChange={e => {
                 dispatch({ type: 'PATCH_USER', payload: { taxYear: e.target.value }});
@@ -3435,14 +5134,19 @@
                 <option value="2024/25">2024/25</option>
               </select>
             </div>
-            <div><label className="input-label">User type</label>
+            <div><label className="input-label">User type <span className="t-muted">(reconfigures UI)</span></label>
               <select className="input" value={state.user.userType} onChange={e => dispatch({ type: 'PATCH_USER', payload: { userType: e.target.value }})}>
-                <option value="individual">Individual</option>
-                <option value="sole_prop">Sole proprietor / freelancer</option>
+                {USER_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
           </div>
         );
+      } else if (section === 'privacy') {
+        content = <PrivacySection onShowModal={() => setSection('privacy_modal')} />;
+      } else if (section === 'privacy_modal') {
+        content = <PrivacyModalBody onAccept={() => setSection('privacy')} />;
+      } else if (section === 'backup') {
+        content = <BackupSection />;
       } else if (section === 'accounts') {
         content = (
           <div className="flex flex-col gap-3">

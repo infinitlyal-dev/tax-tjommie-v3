@@ -2,7 +2,7 @@
  * Tax Tjommie v4 service worker — app-shell cache.
  * Versioned: bump CACHE_VERSION on release to invalidate old shells.
  */
-const CACHE_VERSION = 'tt-v4.0.0';
+const CACHE_VERSION = 'tt-v5.0.0';
 const APP_SHELL = [
   '/',
   '/index.html',
