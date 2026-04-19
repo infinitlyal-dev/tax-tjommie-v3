@@ -118,11 +118,34 @@
     button { cursor: pointer; background: none; border: none; padding: 0; }
     a { color: inherit; text-decoration: none; }
     input, textarea { outline: none; }
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 
     /* ============================================================
        LAYOUT — mobile-first phone frame
        ============================================================ */
     #root { min-height: 100vh; min-height: 100dvh; }
+
+    /* Desktop framing — subtle radial gradient only appears at wider viewports */
+    @media (min-width: 500px) {
+      body {
+        background:
+          radial-gradient(ellipse at center, rgba(20,184,166,0.04) 0%, var(--bg-app) 60%),
+          var(--bg-app);
+      }
+      #root::after {
+        content: 'Tax Tjommie is a mobile-first PWA. For best experience, view on your phone.';
+        display: block;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.8125rem;
+        letter-spacing: 0.01em;
+        padding: 16px 24px 32px;
+        max-width: 430px;
+        margin: 0 auto;
+      }
+    }
 
     .phone {
       max-width: 430px;
@@ -133,6 +156,13 @@
       display: flex;
       flex-direction: column;
       background: var(--bg-app);
+    }
+    @media (min-width: 500px) {
+      .phone {
+        min-height: auto;
+        border-left: 1px solid var(--border-faint);
+        border-right: 1px solid var(--border-faint);
+      }
     }
 
     .screen {
@@ -1079,8 +1109,8 @@
         if (abs >= 1e6) return `R ${(value/1e6).toFixed(1)}M`;
         return `R ${Math.round(value/1000)}k`;
       }
-      const showCents = opts.forceCents || abs < 100;
-      // Spec/mockup mandate comma thousand-separator, dot decimal — use en-US then prefix "R ".
+      // SA currency: comma thousand-separator, dot decimal, always show cents (unless opts.noCents).
+      const showCents = !opts.noCents;
       return 'R ' + value.toLocaleString('en-US', {
         minimumFractionDigits: showCents ? 2 : 0,
         maximumFractionDigits: showCents ? 2 : 0,
@@ -1705,7 +1735,7 @@
     function CurrencyInput({ value, onChange, placeholder = '0', autoFocus }) {
       const [focused, setFocused] = useState(false);
       const [local, setLocal] = useState(value ? String(value) : '');
-      useEffect(() => { if (!focused) setLocal(value ? value.toLocaleString('en-ZA') : ''); }, [value, focused]);
+      useEffect(() => { if (!focused) setLocal(value ? value.toLocaleString('en-US') : ''); }, [value, focused]);
       return (
         <div className="input-group">
           <span className="input-prefix">R</span>
@@ -3152,7 +3182,10 @@
 
           <div>
             <label className="input-label">Work area percentage of home</label>
-            <input className="input" type="number" inputMode="decimal" value={percentage} onChange={e => setPercentage(parseFloat(e.target.value) || 0)} />
+            <input className="input" type="number" inputMode="decimal" min={0} max={100} value={percentage} onChange={e => {
+              const v = parseFloat(e.target.value) || 0;
+              setPercentage(Math.max(0, Math.min(100, v)));
+            }} />
           </div>
 
           <div>
@@ -3586,7 +3619,7 @@
 
       return (
         <>
-          {tab === 'home' && <HomeTab openSettings={() => setSettings(true)} />}
+          {tab === 'home' && <HomeTab openSettings={() => setSettings(true)} setTab={setTab} />}
           {tab === 'tax' && <TaxTab />}
           {tab === 'budget' && <BudgetTab />}
           {tab === 'backpocket' && <BackpocketTab />}
@@ -3600,7 +3633,7 @@
               <div className="nav-icon"><Icon name="tax" /></div>
               Tax
             </button>
-            <button className="nav-btn nav-btn-center" onClick={() => setQuickAdd(true)}>
+            <button className="nav-btn nav-btn-center" onClick={() => setQuickAdd(true)} aria-label="Add transaction">
               <div className="nav-icon"><Icon name="plus" size={24} stroke={2.5} /></div>
             </button>
             <button className={`nav-btn ${tab === 'budget' ? 'active' : ''}`} onClick={() => setTab('budget')}>
@@ -3671,6 +3704,9 @@
       const [hasReceipt, setHasReceipt] = useState(false);
       const [complianceWho, setComplianceWho] = useState('');
       const [compliancePurpose, setCompliancePurpose] = useState('');
+      const [touched, setTouched] = useState(false);
+      const descErr = touched && !description.trim();
+      const amountErr = touched && (!amount || amount <= 0);
       const isClientEnt = category === 'client_entertainment';
       const isDeductible = CATEGORIES[category]?.group === 'work';
       // v5 fix: inline tax-year warning when date is outside active year
@@ -3679,7 +3715,8 @@
       const taxYearMismatch = impliedYear !== activeYear;
 
       const save = () => {
-        if (!description || !amount) { showToast('Description and amount needed.', 'error'); return; }
+        setTouched(true);
+        if (!description.trim() || !amount || amount <= 0) return;
         const txn = {
           id: uid('txn'),
           accountId: 'acc_main',
@@ -3729,11 +3766,13 @@
             </div>
             <div>
               <label className="input-label">Description</label>
-              <input className="input" placeholder="e.g. Takealot — new laptop" value={description} onChange={e => setDescription(e.target.value)} />
+              <input className="input" placeholder="e.g. Takealot — new laptop" value={description} onChange={e => setDescription(e.target.value)} style={{borderColor: descErr ? 'var(--red)' : undefined}} />
+              {descErr && <div className="t-small t-red mt-1">Description is required.</div>}
             </div>
             <div>
               <label className="input-label">Amount</label>
               <CurrencyInput value={amount} onChange={setAmount} />
+              {amountErr && <div className="t-small t-red mt-1">Enter an amount greater than zero.</div>}
             </div>
             <div>
               <label className="input-label">Category</label>
@@ -4069,12 +4108,13 @@
     }
 
     /* ===== HOME TAB ===== */
-    function HomeTab({ openSettings }) {
-      const { state, setSheet } = useData();
+    function HomeTab({ openSettings, setTab }) {
+      const { state, dispatch, setSheet } = useData();
       const year = state.settings.activeTaxYear;
       const estimate = useMemo(() => Tax.estimate(state), [state]);
       const ytdDeductions = estimate.totalDeductions;
-      const taxSavings = estimate.savings;
+      const marginalRate = estimate.rate || 0.18;
+      const taxSavings = Math.max(estimate.savings, ytdDeductions * marginalRate);
       const currentMonth = new Date().toISOString().slice(0, 7);
       const thisMonthSpent = useMemo(() => {
         return state.transactions
@@ -4097,7 +4137,7 @@
               <div className="t-h1">{state.user.name || 'there'}</div>
             </div>
             <div className="flex items-center gap-2">
-              <div className="pill" style={{background: 'var(--bg-surface)', border: '1px solid var(--border-faint)'}}>
+              <div className="t-small t-muted" style={{padding: '4px 10px', fontVariantNumeric: 'tabular-nums'}}>
                 {year}
               </div>
               <button className="header-btn" onClick={openSettings}><Icon name="settings" /></button>
@@ -4109,24 +4149,26 @@
             <div className="card mb-4" style={{background: 'var(--amber-dim)', borderColor: 'rgba(245,158,11,0.3)', padding: 12}}>
               <div className="flex items-center gap-2">
                 <Icon name="warning" size={14} />
-                <div className="t-small" style={{flex: 1}}>AI is off. Categorisation is reduced.</div>
-                <button className="btn-link" onClick={openSettings} style={{padding: '2px 8px'}}>Re-enable</button>
+                <div className="t-small" style={{flex: 1}}>Auto-categorisation is off. Manual mode only.</div>
+                <button className="btn-link" onClick={() => dispatch({ type: 'PATCH_SETTINGS', payload: { skipAiProcessing: false }})} style={{padding: '2px 8px'}}>Re-enable</button>
               </div>
             </div>
           )}
 
           {/* User-type-adaptive hero card */}
           {state.user.userType === 'salaried' ? (
-            <SalariedRefundCard estimate={estimate} />
+            <button onClick={() => setTab && setTab('tax')} style={{width: '100%', display: 'block', textAlign: 'left'}}>
+              <SalariedRefundCard estimate={estimate} />
+            </button>
           ) : (
-            <div className="card-hero mb-4">
+            <button onClick={() => setTab && setTab('tax')} className="card-hero mb-4" style={{width: '100%', display: 'block', textAlign: 'left', cursor: 'pointer'}}>
               <div className="t-small t-secondary mb-2">Tax deductions YTD</div>
               <div className="t-hero"><CountUp target={ytdDeductions} /></div>
-              <div className="t-small t-muted mt-3">Saving you ~{fmtZAR(taxSavings)} in tax</div>
-            </div>
+              <div className="t-small t-muted mt-3">Saving you {fmtZAR(taxSavings)} in tax</div>
+            </button>
           )}
 
-          <div className="card mb-4">
+          <button className="card mb-4" onClick={() => setTab && setTab('budget')} style={{width: '100%', display: 'block', textAlign: 'left', cursor: 'pointer'}}>
             <div className="flex items-center justify-between mb-3">
               <div className="t-h2">This month</div>
               <div className="t-small t-secondary">{fmtZAR(thisMonthSpent)} / {fmtZAR(monthlyBudget)}</div>
@@ -4135,10 +4177,14 @@
               <div className={`progress-bar-fill ${budgetColor}`} style={{width: `${Math.min(100, budgetPct * 100)}%`}}></div>
             </div>
             <div className="t-small t-muted">{budgetPct >= 1 ? 'Over budget this month.' : budgetPct >= 0.8 ? 'Watching the edge.' : 'On track.'}</div>
-          </div>
+          </button>
 
           {/* Provisional tax card — only for provisional taxpayer types (spec §6) */}
-          {PROV_TAXPAYER_TYPES.has(state.user.userType) && <ProvCard />}
+          {PROV_TAXPAYER_TYPES.has(state.user.userType) && (
+            <button onClick={() => setTab && setTab('tax')} style={{width: '100%', display: 'block', textAlign: 'left'}}>
+              <ProvCard />
+            </button>
+          )}
 
           {topGoal && (
             <div className="card mb-4">
@@ -4245,6 +4291,8 @@
     function TaxSummary() {
       const { state, showToast } = useData();
       const est = Tax.estimate(state);
+      const marginalRate = est.rate || 0.18;
+      const displaySavings = Math.max(est.savings, est.totalDeductions * marginalRate);
 
       const generatePDF = async () => {
         if (!window.jspdf) {
@@ -4317,7 +4365,7 @@
           <div className="card-hero mb-4">
             <div className="t-small t-secondary mb-2">Estimated tax for {state.user.taxYear}</div>
             <div className="t-hero"><CountUp target={est.total} /></div>
-            <div className="t-small t-muted mt-3">Saving {fmtZAR(est.savings)} from deductions · {(est.rate*100).toFixed(0)}% marginal</div>
+            <div className="t-small t-muted mt-3">Saving {fmtZAR(displaySavings)} from deductions · {(marginalRate*100).toFixed(0)}% marginal</div>
           </div>
 
           <div className="card mb-4">
@@ -4330,9 +4378,9 @@
             ))}
           </div>
 
-          <button className="btn btn-ghost" onClick={generatePDF}>
+          <button className="btn btn-ghost" disabled style={{opacity: 0.5, cursor: 'not-allowed'}}>
             <Icon name="download" size={18} />
-            Generate PDF for practitioner
+            PDF export — coming soon
           </button>
         </div>
       );
@@ -4349,7 +4397,11 @@
 
       const taxable = Math.max(0, income - deductions);
       const gross = Tax.calc(taxable, year);
-      const rebate = Tax.primaryRebate(year, age);
+      const rebates = Tax.tables(year).rebates;
+      const primaryReb = rebates.primary;
+      const secondaryReb = age >= 65 ? rebates.secondary : 0;
+      const tertiaryReb = age >= 75 ? rebates.tertiary : 0;
+      const rebate = primaryReb + secondaryReb + tertiaryReb;
       const medCredit = hasMedical ? Tax.medCredit(state.taxProfile.medical?.members || 1, state.taxProfile.medical?.dependents || 0, year) : 0;
       const net = Math.max(0, gross - rebate - medCredit);
       const monthly = net / 12;
@@ -4384,7 +4436,10 @@
             </div>
             <div>
               <label className="input-label">Age</label>
-              <input className="input" type="number" value={age} onChange={e => setAge(parseInt(e.target.value) || 0)} />
+              <input className="input" type="number" min={18} max={120} value={age} onChange={e => {
+                const v = parseInt(e.target.value) || 0;
+                setAge(Math.max(18, Math.min(120, v)));
+              }} />
             </div>
             <div>
               <label className="input-label">Total annual deductions</label>
@@ -4412,7 +4467,10 @@
             <div className="flex justify-between py-2 t-small" style={{borderTop:'1px solid var(--border-faint)'}}>
               <span className="t-secondary">Tax before rebates</span><span className="t-tabular">{fmtZAR(gross)}</span>
             </div>
-            <div className="flex justify-between py-2 t-small"><span className="t-secondary">Less: Primary rebate</span><span className="t-tabular">-{fmtZAR(rebate)}</span></div>
+            <div className="flex justify-between py-2 t-small"><span className="t-secondary">Less: Primary rebate</span><span className="t-tabular">-{fmtZAR(primaryReb)}</span></div>
+            {secondaryReb > 0 && <div className="flex justify-between py-2 t-small"><span className="t-secondary">Less: Secondary rebate (65+)</span><span className="t-tabular">-{fmtZAR(secondaryReb)}</span></div>}
+            {tertiaryReb > 0 && <div className="flex justify-between py-2 t-small"><span className="t-secondary">Less: Tertiary rebate (75+)</span><span className="t-tabular">-{fmtZAR(tertiaryReb)}</span></div>}
+            {(secondaryReb > 0 || tertiaryReb > 0) && <div className="flex justify-between py-2 t-small" style={{fontWeight: 500}}><span className="t-secondary">Total rebate</span><span className="t-tabular">-{fmtZAR(rebate)}</span></div>}
             {hasMedical && <div className="flex justify-between py-2 t-small"><span className="t-secondary">Less: Medical credit</span><span className="t-tabular">-{fmtZAR(medCredit)}</span></div>}
             <div className="flex justify-between items-end mt-4" style={{borderTop:'2px solid var(--teal)', paddingTop: 12}}>
               <span className="t-small t-secondary">Net tax payable</span>
@@ -4551,12 +4609,18 @@
     }
 
     function DeductionEditor({ catKey }) {
-      const { state, dispatch } = useData();
+      const { state, dispatch, setSheet, showToast } = useData();
       const config = state.taxProfile[catKey] || {};
       const [local, setLocal] = useState(config);
+      const [saving, setSaving] = useState(false);
       useEffect(() => { setLocal(state.taxProfile[catKey] || {}); }, [catKey]);
       const update = (patch) => setLocal(l => ({ ...l, ...patch }));
-      const save = () => { dispatch({ type: 'PATCH_PROFILE', payload: { [catKey]: local }}); };
+      const save = () => {
+        setSaving(true);
+        dispatch({ type: 'PATCH_PROFILE', payload: { [catKey]: local }});
+        showToast('Saved.', 'success');
+        setTimeout(() => { setSheet(null); }, 150);
+      };
 
       if (catKey === 'homeOffice') return (
         <div className="flex flex-col gap-4">
@@ -4580,7 +4644,10 @@
             )}
             <div>
               <label className="input-label">Work area percentage</label>
-              <input className="input" type="number" value={local.percentage || 0} onChange={e => update({ percentage: parseFloat(e.target.value) || 0 })} />
+              <input className="input" type="number" min={0} max={100} value={local.percentage || 0} onChange={e => {
+                const v = parseFloat(e.target.value) || 0;
+                update({ percentage: Math.max(0, Math.min(100, v)) });
+              }} />
             </div>
             <div>
               <label className="input-label">Monthly rent or bond interest <span className="t-muted">(interest only)</span></label>
@@ -4648,6 +4715,22 @@
             <div className="checkbox-box">{local.enabled && <Icon name="check" size={14} stroke={3} />}</div>
             <span>Enable {cfg.en} deduction</span>
           </button>
+          {local.enabled && catKey === 'retirement' && (() => {
+            const annualIncome = (state.user.monthlyGross || 0) * 12;
+            const annualRA = (local.monthlyRA || 0) * 12;
+            const capPct = annualIncome * 0.275;
+            const capAbs = 350000;
+            const applied = Math.min(annualRA, capPct, capAbs);
+            const capped = applied < annualRA;
+            if (!capped || !annualRA) return null;
+            const reason = applied === capAbs ? `Capped at R350,000 annual limit` : `Capped at 27.5% of taxable income (${fmtZAR(capPct)})`;
+            return (
+              <div className="card" style={{background: 'var(--amber-dim)', borderColor: 'rgba(245,158,11,0.3)', padding: 12}}>
+                <div className="t-small t-amber" style={{fontWeight: 600}}>RA deduction cap applied</div>
+                <div className="t-small t-secondary mt-1">{reason}. Your deductible amount: {fmtZAR(applied)}.</div>
+              </div>
+            );
+          })()}
           {local.enabled && cfg.fields.map(([key, label, type]) => (
             <div key={key}>
               <label className="input-label">{label}</label>
@@ -4698,7 +4781,30 @@
     /* ===== BUDGET TAB ===== */
     /* ===== BUDGET TAB (v5: sub-category drill-down + unusual-spending flag) ===== */
     function BudgetTab() {
-      const { state } = useData();
+      const { state, dispatch, setSheet, showToast } = useData();
+      const openTxnDetail = (t) => setSheet({ title: 'Transaction', content: (
+        <div className="flex flex-col gap-3">
+          <div className="card">
+            <div className="t-micro mb-1">DESCRIPTION</div>
+            <div className="t-body">{t.description}</div>
+          </div>
+          <div className="grid grid-2">
+            <div className="card"><div className="t-micro mb-1">AMOUNT</div><div className="t-body t-tabular">{fmtZAR(Math.abs(t.amount))}</div></div>
+            <div className="card"><div className="t-micro mb-1">DATE</div><div className="t-body">{fmtDate(t.date)}</div></div>
+          </div>
+          <div className="card">
+            <div className="t-micro mb-1">CATEGORY</div>
+            <div className="t-body">{CATEGORIES[t.category]?.label || t.category}</div>
+          </div>
+          <button className="btn btn-danger" onClick={() => {
+            if (confirm('Delete this transaction?')) {
+              dispatch({ type: 'DELETE_TXN', payload: t.id });
+              showToast('Transaction deleted.', 'success');
+              setSheet(null);
+            }
+          }}><Icon name="trash" size={16} /> Delete transaction</button>
+        </div>
+      )});
       const [month] = useState(new Date().toISOString().slice(0, 7));
       const categories = state.budget?.categories || {};
       const entries = Object.entries(categories);
@@ -4801,10 +4907,15 @@
                         <div className="t-micro">TRANSACTIONS THIS MONTH</div>
                         {txnsInCat.length === 0 && <div className="t-small t-muted">No transactions.</div>}
                         {txnsInCat.map(t => (
-                          <div className="flex justify-between t-small py-1" key={t.id}>
+                          <button
+                            key={t.id}
+                            className="flex justify-between t-small py-1"
+                            onClick={(e) => { e.stopPropagation(); openTxnDetail(t); }}
+                            style={{width: '100%', textAlign: 'left', cursor: 'pointer'}}
+                          >
                             <span>{fmtDate(t.date)} · {t.description}</span>
                             <span className="t-tabular">{fmtZAR(Math.abs(t.amount))}</span>
-                          </div>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -4837,21 +4948,31 @@
             <div className="t-small t-muted mt-3">{state.backpocket.length} goal{state.backpocket.length !== 1 ? 's' : ''}</div>
           </div>
 
+          {state.backpocket.length === 0 && (
+            <div className="card text-center mb-4" style={{padding: 40}}>
+              <p className="t-body t-secondary">Add your first goal to start putting money aside.</p>
+            </div>
+          )}
           <div className="flex flex-col gap-3 mb-4">
             {state.backpocket.map(g => {
               const pct = (g.currentAmount || 0) / (g.targetAmount || 1);
               const daysLeft = g.targetDate ? Math.round((new Date(g.targetDate) - new Date()) / 86400000) : null;
+              const isOverdue = daysLeft !== null && daysLeft < 0;
+              const deadlineStr = daysLeft === null ? '' : isOverdue
+                ? <span className="t-red" style={{fontWeight: 600}}> · OVERDUE</span>
+                : ` · ${daysLeft} days`;
               return (
                 <div className="card" key={g.id}>
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <div className="t-h2">{g.label}</div>
-                      <div className="t-small t-muted mt-1">{fmtZAR(g.currentAmount || 0)} of {fmtZAR(g.targetAmount)}{daysLeft !== null ? ` · ${daysLeft} days` : ''}</div>
+                      <div className="t-small t-muted mt-1">{fmtZAR(g.currentAmount || 0)} of {fmtZAR(g.targetAmount)}{deadlineStr}</div>
                     </div>
                     <ProgressRing value={pct} size={56} />
                   </div>
                   <div className="flex gap-2">
                     <button className="btn-link" onClick={() => setSheet({ title: 'Add deposit', content: <DepositForm goalId={g.id} onDone={() => setSheet(null)} /> })}>+ Deposit</button>
+                    <button className="btn-link" onClick={() => setSheet({ title: 'Edit goal', content: <EditGoalForm goal={g} onDone={() => setSheet(null)} /> })}>Edit</button>
                     <button className="btn-text" onClick={() => {
                       if (confirm('Delete this goal?')) { dispatch({ type: 'DELETE_GOAL', payload: g.id }); showToast('Deleted.'); }
                     }}>Delete</button>
@@ -4875,18 +4996,30 @@
       const [label, setLabel] = useState('');
       const [target, setTarget] = useState(0);
       const [date, setDate] = useState('');
+      const [touched, setTouched] = useState(false);
+      const labelErr = touched && !label.trim();
+      const targetErr = touched && !target;
       const save = () => {
-        if (!label || !target) { showToast('Label and target required.', 'error'); return; }
+        setTouched(true);
+        if (!label.trim() || !target) return;
         dispatch({ type: 'ADD_GOAL', payload: {
-          id: uid('bp'), label, targetAmount: target, currentAmount: 0, targetDate: date || null, source: 'user_created', deposits: [],
+          id: uid('bp'), label: label.trim(), targetAmount: target, currentAmount: 0, targetDate: date || null, source: 'user_created', deposits: [],
         }});
         showToast('Goal added.', 'success');
         onDone();
       };
       return (
         <div className="flex flex-col gap-4">
-          <div><label className="input-label">Goal name</label><input className="input" value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. New camera body" /></div>
-          <div><label className="input-label">Target amount</label><CurrencyInput value={target} onChange={setTarget} /></div>
+          <div>
+            <label className="input-label">Goal name</label>
+            <input className="input" value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. New camera body" style={{borderColor: labelErr ? 'var(--red)' : undefined}} />
+            {labelErr && <div className="t-small t-red mt-1">Enter a goal name.</div>}
+          </div>
+          <div>
+            <label className="input-label">Target amount</label>
+            <CurrencyInput value={target} onChange={setTarget} />
+            {targetErr && <div className="t-small t-red mt-1">Enter an amount greater than zero.</div>}
+          </div>
           <div><label className="input-label">Target date (optional)</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
           <button className="btn btn-primary" onClick={save}>Create goal</button>
         </div>
@@ -4897,17 +5030,62 @@
       const { dispatch, showToast } = useData();
       const [amount, setAmount] = useState(0);
       const [note, setNote] = useState('');
+      const [touched, setTouched] = useState(false);
+      const [saving, setSaving] = useState(false);
+      const amountErr = touched && (!amount || amount <= 0);
       const save = () => {
-        if (!amount) { showToast('Amount required.', 'error'); return; }
+        setTouched(true);
+        if (!amount || amount <= 0) return;
+        setSaving(true);
         dispatch({ type: 'ADD_DEPOSIT', payload: { goalId, deposit: { date: new Date().toISOString(), amount, note }}});
         showToast('Deposit added.', 'success');
         onDone();
       };
       return (
         <div className="flex flex-col gap-4">
-          <div><label className="input-label">Amount</label><CurrencyInput value={amount} onChange={setAmount} autoFocus /></div>
+          <div>
+            <label className="input-label">Amount</label>
+            <CurrencyInput value={amount} onChange={setAmount} autoFocus />
+            {amountErr && <div className="t-small t-red mt-1">Enter an amount greater than zero.</div>}
+          </div>
           <div><label className="input-label">Note (optional)</label><input className="input" value={note} onChange={e => setNote(e.target.value)} /></div>
-          <button className="btn btn-primary" onClick={save}>Add deposit</button>
+          <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Add deposit'}</button>
+        </div>
+      );
+    }
+
+    function EditGoalForm({ goal, onDone }) {
+      const { dispatch, showToast } = useData();
+      const [label, setLabel] = useState(goal.label || '');
+      const [target, setTarget] = useState(goal.targetAmount || 0);
+      const [date, setDate] = useState(goal.targetDate || '');
+      const [touched, setTouched] = useState(false);
+      const labelErr = touched && !label.trim();
+      const targetErr = touched && (!target || target <= 0);
+      const save = () => {
+        setTouched(true);
+        if (!label.trim() || !target || target <= 0) return;
+        dispatch({ type: 'UPDATE_GOAL', payload: { id: goal.id, label: label.trim(), targetAmount: target, targetDate: date || null } });
+        showToast('Goal updated.', 'success');
+        onDone();
+      };
+      return (
+        <div className="flex flex-col gap-4">
+          <div>
+            <label className="input-label">Goal name</label>
+            <input className="input" value={label} onChange={e => setLabel(e.target.value)} style={{borderColor: labelErr ? 'var(--red)' : undefined}} />
+            {labelErr && <div className="t-small t-red mt-1">Enter a goal name.</div>}
+          </div>
+          <div>
+            <label className="input-label">Target amount</label>
+            <CurrencyInput value={target} onChange={setTarget} />
+            {targetErr && <div className="t-small t-red mt-1">Enter an amount greater than zero.</div>}
+          </div>
+          <div>
+            <label className="input-label">Target date (optional)</label>
+            <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+          <button className="btn btn-primary" onClick={save}>Save changes</button>
         </div>
       );
     }
@@ -5022,7 +5200,9 @@
             <div className="t-h2 mb-2">Encrypted manual backup</div>
             <p className="t-small t-secondary mb-3">Download your data as an encrypted file. You'll need the same passphrase to restore it later. If you lose the passphrase, nobody can recover the data — not even us.</p>
             <label className="input-label">Passphrase (≥ 8 characters)</label>
-            <input className="input mb-3" type="password" value={exportPass} onChange={e => setExportPass(e.target.value)} placeholder="A passphrase you'll remember" />
+            <input className="input" type="password" value={exportPass} onChange={e => setExportPass(e.target.value)} placeholder="A passphrase you'll remember" style={{borderColor: exportPass && exportPass.length < 8 ? 'var(--red)' : undefined}} />
+            {exportPass && exportPass.length < 8 && <div className="t-small t-red mt-1 mb-3">Passphrase must be at least 8 characters.</div>}
+            {!(exportPass && exportPass.length < 8) && <div className="mb-3" />}
             <button className="btn btn-ghost" disabled={busy || exportPass.length < 8} onClick={exportEncrypted}>
               <Icon name="download" size={16} /> Download encrypted backup
             </button>
@@ -5084,8 +5264,8 @@
         r.readAsText(file);
       };
 
+      const [resetConfirm, setResetConfirm] = useState('');
       const resetAll = () => {
-        if (!confirm('Delete all data? This cannot be undone.')) return;
         localStorage.removeItem(STORAGE_KEY);
         location.reload();
       };
@@ -5117,12 +5297,19 @@
         content = (
           <div className="flex flex-col gap-4">
             <div><label className="input-label">Name</label><input className="input" value={state.user.name} onChange={e => dispatch({ type: 'PATCH_USER', payload: { name: e.target.value }})} /></div>
-            <div><label className="input-label">Email</label><input className="input" type="email" value={state.user.email || ''} onChange={e => dispatch({ type: 'PATCH_USER', payload: { email: e.target.value }})} /></div>
+            <div>
+              <label className="input-label">Email</label>
+              <input className="input" type="email" value={state.user.email || ''} onChange={e => dispatch({ type: 'PATCH_USER', payload: { email: e.target.value }})} style={{borderColor: state.user.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.user.email) ? 'var(--red)' : undefined}} />
+              {state.user.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.user.email) && <div className="t-small t-red mt-1">Enter a valid email address.</div>}
+            </div>
             <div><label className="input-label">Occupation</label><input className="input" value={state.user.occupation || ''} onChange={e => dispatch({ type: 'PATCH_USER', payload: { occupation: e.target.value }})} placeholder="e.g. Photographer" /></div>
             <div><label className="input-label">Monthly income (before tax)</label><CurrencyInput value={state.user.monthlyGross} onChange={v => dispatch({ type: 'PATCH_USER', payload: { monthlyGross: v }})} /></div>
             {state.user.userType === 'retired' && (
               <div><label className="input-label">Age <span className="t-muted">(affects rebates)</span></label>
-                <input className="input" type="number" value={state.user.age || 65} onChange={e => dispatch({ type: 'PATCH_USER', payload: { age: parseInt(e.target.value) || 65 }})} />
+                <input className="input" type="number" min={18} max={120} value={state.user.age || 65} onChange={e => {
+                  const v = parseInt(e.target.value) || 65;
+                  dispatch({ type: 'PATCH_USER', payload: { age: Math.max(18, Math.min(120, v)) }});
+                }} />
               </div>
             )}
             <div><label className="input-label">Active tax year</label>
@@ -5148,12 +5335,13 @@
       } else if (section === 'backup') {
         content = <BackupSection />;
       } else if (section === 'accounts') {
+        const liveCount = (accId) => state.transactions.filter(t => (t.accountId || 'acc_main') === accId).length;
         content = (
           <div className="flex flex-col gap-3">
             {state.accounts.map(a => (
               <div className="card" key={a.id}>
                 <div className="t-body">{a.label}</div>
-                <div className="t-small t-muted">{a.type} · {a.transactionCount || 0} transactions</div>
+                <div className="t-small t-muted">{a.type} · {plural(liveCount(a.id), 'transaction')}</div>
               </div>
             ))}
           </div>
@@ -5170,7 +5358,14 @@
               <Icon name="upload" size={18}/> Import data (JSON)
               <input type="file" accept=".json" className="sr-only" onChange={importJson}/>
             </label>
-            <button className="btn btn-danger" onClick={resetAll}><Icon name="trash" size={18}/> Reset all data</button>
+            <div className="card" style={{background: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.3)'}}>
+              <div className="t-small t-red mb-2" style={{fontWeight: 600}}>Reset all data</div>
+              <div className="t-small t-secondary mb-3">This will permanently erase all your data. Type <strong>DELETE</strong> to confirm.</div>
+              <input className="input mb-3" value={resetConfirm} onChange={e => setResetConfirm(e.target.value)} placeholder="Type DELETE" />
+              <button className="btn btn-danger" disabled={resetConfirm !== 'DELETE'} onClick={resetAll} style={{width: '100%'}}>
+                <Icon name="trash" size={18}/> Reset all data
+              </button>
+            </div>
           </div>
         );
       } else if (section === 'about') {
