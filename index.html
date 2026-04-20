@@ -1430,305 +1430,137 @@
       };
     }
 
-    /* ===== DIRECT CLAUDE API CALLS (browser → api.anthropic.com) ======
-       Previous architecture used a /api/* proxy. Switched to direct browser calls
-       with user-supplied API key stored locally. Zero-retention header set on every
-       request. The key never leaves the browser except to Anthropic. */
-    const ANTHROPIC_KEY_STORAGE = 'ttj_anthropic_key';
-    const ANTHROPIC_MODEL = 'claude-sonnet-4-6';
-    const ANTHROPIC_VERSION = '2023-06-01';
+    /* ===== VERCEL PROXY CALLS (browser → /api/categorise* → api.anthropic.com) ======
+       The Vercel serverless functions in /api/ hold ANTHROPIC_API_KEY in env
+       and forward requests with the zero-retention header. Users don't manage
+       keys — every user hits the same server-configured proxy. */
 
-    const getApiKey = () => {
-      try { return localStorage.getItem(ANTHROPIC_KEY_STORAGE) || ''; }
-      catch { return ''; }
-    };
-
-    const setApiKey = (key) => {
-      try { localStorage.setItem(ANTHROPIC_KEY_STORAGE, key); } catch {}
-    };
-
-    const PARSING_PROMPT = `You are parsing a South African financial document for a personal tax and budgeting app called Tax Tjommie.
-
-The document may be a bank statement, credit card statement, till slip, receipt, payslip, medical aid statement, or any other financial record.
-
-Extract every transaction or line item you can identify. Return ONLY a JSON array. No preamble, no explanation, no markdown fences, no prose.
-
-For each item, return this exact shape:
-{
-  "date": "YYYY-MM-DD",
-  "description": "cleaned merchant or description, max 60 chars",
-  "amount": 0.00,
-  "direction": "debit" | "credit",
-  "category": "one of the categories below",
-  "tax_relevant": true | false,
-  "tax_category": "one of the tax categories below or null",
-  "confidence": 0.0 to 1.0
-}
-
-BUDGET CATEGORIES — pick the best match:
-- housing (rent, bond, rates, levies, sectional title)
-- utilities (water, electricity, gas, refuse)
-- groceries (supermarkets, food shopping)
-- transport (fuel, Uber, Bolt, taxi, parking, tolls, car service)
-- eating_out (restaurants, takeaways, coffee shops)
-- connectivity (phone, internet, data, airtime, fibre)
-- medical (doctor, pharmacy, dentist, optometrist)
-- medical_aid (Discovery, Momentum, Bonitas, medical scheme premiums)
-- insurance (short-term, life, vehicle, household)
-- savings (transfers to savings accounts, investments)
-- retirement (RA, pension, provident fund contributions)
-- subscriptions (streaming, software, memberships, gym)
-- clothing (apparel, shoes, accessories)
-- personal_care (hairdresser, beauty, toiletries)
-- entertainment (cinema, events, hobbies)
-- donations (charity, church, tithing, NPO)
-- debt (loan repayments, credit card payments, bond extra)
-- banking (bank fees, card fees, ATM charges)
-- education (school fees, university, courses)
-- childcare (crèche, aftercare, au pair)
-- income (salary, freelance payments, rental income)
-- transfer (internal transfers between own accounts)
-- other (genuine unknowns only)
-
-TAX CATEGORIES (SARS 2025/26) — set tax_category when the transaction is plausibly deductible, else null:
-- home_office (rent/utilities portion if work-from-home)
-- vehicle_work_use (fuel, maintenance if work-related and logbook kept)
-- phone_work_use (work portion of phone)
-- internet_work_use (work portion of internet)
-- medical_aid_contribution (for medical tax credit)
-- medical_out_of_pocket (potentially deductible above 7.5% of taxable income)
-- retirement_contribution (RA, pension, provident — up to 27.5% capped at R350k)
-- section_18a_donation (only if recipient is a registered PBO)
-- professional_fees (professional body memberships, CPD)
-- equipment (work tools, computers, software — depreciation/wear & tear)
-- business_expense (for self-employed: office costs, marketing, materials)
-- professional_indemnity (insurance required for work)
-- work_travel_not_commute (deductible only with logbook, excludes home→office)
-- bad_debts (for freelancers with uncollectible invoices)
-
-RULES:
-1. Ignore statement headers, balances, account numbers, totals, page numbers. Only actual transactions or line items.
-2. Amount is always positive. Use "direction" for flow.
-3. For SA retailers, recognise context:
-   - Woolworths/Checkers/Pick n Pay/Shoprite/Spar/Food Lover's → groceries
-   - Engen/Shell/BP/Sasol/Caltex/Total → transport (tax_category: vehicle_work_use if likely work-related)
-   - Dis-Chem/Clicks → medical unless context clearly says cosmetics/groceries
-   - Takealot/Amazon/Superbalist → other (can't tell category from merchant)
-   - Netflix/Showmax/DSTV/Spotify/YouTube → subscriptions
-   - Discovery/Momentum/Bonitas/Fedhealth → medical_aid
-   - Old Mutual/Sanlam/Allan Gray/10X (RA context) → retirement
-4. If transaction is clearly work-related for a self-employed or commission earner, set tax_relevant: true and pick the matching tax_category.
-5. If the document is a single till slip, extract as one transaction with merchant + total.
-6. If the document is a payslip, extract: gross salary (income), PAYE (other), UIF (other), medical aid deduction (medical_aid), RA/pension deduction (retirement), net pay (ignore — it's a derived total).
-7. If the document is a medical aid statement, extract each claim and payment separately if possible.
-8. Low confidence (<0.5) is fine — mark it and move on. Don't invent.
-9. Return ONLY the JSON array. No \`\`\`json fences. No prose. If you genuinely cannot parse anything, return [].`;
-
-    /* Spec category → app category (budget display). The app's CATEGORIES constant
-       was built before the spec prompt existed; map so one side can evolve without
-       forcing a schema rewrite. */
-    function mapSpecBudgetCategory(specCat) {
-      const map = {
-        housing: 'housing',
-        utilities: 'housing',
-        groceries: 'groceries',
-        transport: 'transport_personal',
-        eating_out: 'eating_out',
-        connectivity: 'phone_internet',
-        medical: 'medical',
-        medical_aid: 'medical',
-        insurance: 'insurance_personal',
-        savings: 'other_personal',
-        retirement: 'other_personal',
-        subscriptions: 'subscriptions_personal',
-        clothing: 'clothing',
-        personal_care: 'personal_care',
-        entertainment: 'entertainment',
-        donations: 'gifts',
-        debt: 'debt_repayment',
-        banking: 'bank_charges',
-        education: 'education_personal',
-        childcare: 'other_personal',
-        income: 'ignore',
-        transfer: 'ignore',
-        other: 'other_personal',
-      };
-      return map[specCat] || 'uncategorised';
-    }
-
-    /* Spec tax category → app taxProfile bucket key (Tax.estimate breakdown). */
-    function mapSpecTaxCategory(specTaxCat) {
-      const map = {
+    /** Work-category → taxProfile bucket (used to set per-bucket imported aggregates).
+        Mirrors the grouping in CATEGORIES['work']. */
+    function existingWorkCatToTaxBucket(catKey) {
+      const m = {
         home_office: 'homeOffice',
-        vehicle_work_use: 'travel',
-        phone_work_use: 'phone',
-        internet_work_use: 'phone',
-        medical_aid_contribution: 'medical',
-        medical_out_of_pocket: 'medical',
-        retirement_contribution: 'retirement',
-        section_18a_donation: 'donations',
-        professional_fees: 'professionalFees',
+        vehicle_travel: 'travel',
+        phone_internet: 'phone',
         equipment: 'equipment',
-        business_expense: 'marketing',
-        professional_indemnity: 'professionalFees',
-        work_travel_not_commute: 'travel',
-        bad_debts: 'badDebts',
+        software: 'equipment',
+        professional_services: 'professionalFees',
+        training: 'professionalFees',
+        marketing: 'marketing',
+        office_supplies: 'marketing',
+        client_entertainment: 'marketing',
+        subcontractors: 'marketing',
+        bank_charges: 'marketing',
+        other_business: 'marketing',
       };
-      return map[specTaxCat] || null;
+      return m[catKey] || null;
     }
 
-    /** Validate an API key with a minimal call. Returns { ok: true } or { ok: false, reason }. */
-    async function validateAnthropicKey(key) {
-      if (!key || key.length < 20) return { ok: false, reason: 'Key looks too short.' };
-      try {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': key,
-            'anthropic-version': ANTHROPIC_VERSION,
-            'anthropic-dangerous-direct-browser-access': 'true',
-          },
-          body: JSON.stringify({
-            model: ANTHROPIC_MODEL,
-            max_tokens: 1,
-            messages: [{ role: 'user', content: 'hi' }],
-          }),
-        });
-        if (res.ok) return { ok: true };
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 401) return { ok: false, reason: 'Key rejected by Anthropic (401).' };
-        if (res.status === 429) return { ok: false, reason: 'Rate limited — try again in a minute.' };
-        return { ok: false, reason: err?.error?.message || `API error ${res.status}.` };
-      } catch (e) {
-        return { ok: false, reason: 'Network error — check your connection.' };
-      }
+    /** Translate proxy-returned errors into a user message. */
+    function proxyErrorMessage(status, body) {
+      if (status === 0 || status === undefined) return 'Service unavailable. Try again in a moment.';
+      if (status === 401) return 'Service configuration error. Contact support.';
+      if (status === 413) return 'File too large. Try a smaller PDF.';
+      if (status === 429) return 'Service is busy. Wait a moment and try again.';
+      if (status >= 500) return body?.message || 'Couldn\'t parse this document. Try again or enter manually.';
+      return body?.message || 'Couldn\'t read this document. Try a different file or enter manually.';
     }
 
-    /** Normalise Claude's response array into app-shaped transaction rows. */
-    function normaliseParsedRow(row, sourceFile = null) {
-      const specCat = (row.category || 'other').toLowerCase();
-      const specTaxCat = row.tax_category ? String(row.tax_category).toLowerCase() : null;
-      const direction = row.direction === 'credit' ? 'credit' : 'debit';
-      const rawAmount = Math.abs(Number(row.amount) || 0);
-      // App stores debits as negative; credits positive (income).
-      const signedAmount = direction === 'credit' ? rawAmount : -rawAmount;
-      const appCat = mapSpecBudgetCategory(specCat);
-      const appTaxBucket = row.tax_relevant ? mapSpecTaxCategory(specTaxCat) : null;
+    /** Normalise a proxy-returned row into app-ready transaction shape.
+        Server already uses existing app CATEGORIES keys and signs amounts. */
+    function normaliseServerRow(row, sourceFile = null) {
+      const cat = row.category || 'uncategorised';
+      const isWork = CATEGORIES[cat]?.group === 'work';
+      const taxBucket = isWork ? existingWorkCatToTaxBucket(cat) : null;
       return {
         date: row.date || new Date().toISOString().slice(0, 10),
         description: String(row.description || '').slice(0, 60),
-        amount: signedAmount,
-        direction,
-        category: appCat,
-        specCategory: specCat,
-        taxRelevant: !!row.tax_relevant,
-        taxCategory: appTaxBucket,
-        specTaxCategory: specTaxCat,
+        amount: typeof row.amount === 'number' ? row.amount : 0,
+        category: cat,
+        taxRelevant: isWork,
+        taxCategory: taxBucket,
         confidence: typeof row.confidence === 'number' ? row.confidence : 0.7,
-        needsReview: (row.confidence || 0) < 0.6,
+        needsReview: Boolean(row.needsReview),
         _sourceFile: sourceFile,
       };
     }
 
-    /** Extract the JSON array from a messy model response (strips fences, leading prose). */
-    function extractJsonArray(text) {
-      if (!text) return [];
-      const cleaned = text.replace(/```(?:json)?/gi, '').trim();
-      const start = cleaned.indexOf('[');
-      const end = cleaned.lastIndexOf(']');
-      if (start === -1 || end === -1) return [];
-      try {
-        const parsed = JSON.parse(cleaned.slice(start, end + 1));
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-
-    /** One direct Claude API call. Returns normalised parsed rows. */
-    async function callClaudeParse(contentBlocks) {
-      const key = getApiKey();
-      if (!key) {
-        const e = new Error('no_key');
-        e.userMessage = 'Add your Anthropic API key in Settings → AI key.';
-        throw e;
-      }
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': key,
-          'anthropic-version': ANTHROPIC_VERSION,
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: ANTHROPIC_MODEL,
-          max_tokens: 8192,
-          messages: [{ role: 'user', content: contentBlocks }],
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const e = new Error('api_error');
-        if (res.status === 401) e.userMessage = 'API key rejected. Check the key in Settings → AI key.';
-        else if (res.status === 429) e.userMessage = 'Rate limited. Wait a moment and try again.';
-        else if (res.status === 413) e.userMessage = 'File too large. Try a smaller PDF.';
-        else e.userMessage = body?.error?.message || `Claude API error ${res.status}.`;
-        throw e;
-      }
-      const data = await res.json();
-      const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-      const arr = extractJsonArray(text);
-      if (!arr.length) {
-        console.warn('Empty parse — raw response:', text);
-      }
-      return arr;
-    }
-
-    /** Categorise plain CSV rows. Rebuilds them as a text prompt asking Claude to return the full spec shape. */
+    /** POST to /api/categorise — batch of sanitised CSV rows. */
     async function categoriseBatch(rows, options = {}) {
+      const sanitised = rows.map(sanitiseRow);
       const { context = null, skipAi = false } = options;
-      if (!rows?.length) return [];
       if (skipAi) {
-        return rows.map(r => ({
+        return sanitised.map(r => ({
           ...r,
           category: localKeywordFallback(r.description, r.amount),
           confidence: 0.4,
           needsReview: true,
         }));
       }
-      const ctxText = context ? `User context: ${JSON.stringify(context)}\n\n` : '';
-      const csvSummary = rows.map((r, i) => `${i + 1}. ${r.date || '?'} | ${r.description || '?'} | ${r.amount ?? '?'}`).join('\n');
-      const contentBlocks = [
-        { type: 'text', text: `${ctxText}${PARSING_PROMPT}\n\nDocument content — CSV rows:\n${csvSummary}` },
-      ];
-      const parsed = await callClaudeParse(contentBlocks);
-      return parsed.map(r => normaliseParsedRow(r));
+      try {
+        const res = await fetch('/api/categorise', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactions: sanitised, context }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          const e = new Error('proxy_error');
+          e.userMessage = proxyErrorMessage(res.status, body);
+          throw e;
+        }
+        const data = await res.json();
+        return (data.results || []).map(r => normaliseServerRow(r));
+      } catch (err) {
+        if (err.userMessage) throw err;
+        // Network/connectivity failure — quiet fallback to local keyword matcher so
+        // onboarding still completes. Onboarding copy sets expectation.
+        console.warn('AI categorise failed, using fallback:', err);
+        return sanitised.map(r => ({
+          ...r,
+          category: localKeywordFallback(r.description, r.amount),
+          confidence: 0.3,
+          needsReview: true,
+        }));
+      }
     }
 
-    /** Parse a PDF or image file directly with Claude. */
+    /** POST to /api/categorise-file — PDF or image. */
     async function categoriseFile(file, options = {}) {
       const { context = null } = options;
       const base64 = await fileToBase64(file);
-      const isPdf = /\.pdf$/i.test(file.name);
-      const mediaType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
-      const ctxText = context ? `User context: ${JSON.stringify(context)}\n\n` : '';
-      const fileBlock = isPdf
-        ? { type: 'document', source: { type: 'base64', media_type: mediaType, data: base64 } }
-        : { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } };
-      const parsed = await callClaudeParse([
-        fileBlock,
-        { type: 'text', text: `${ctxText}${PARSING_PROMPT}` },
-      ]);
-      return parsed.map(r => normaliseParsedRow(r, file.name));
+      const fileType = /\.pdf$/i.test(file.name) ? 'pdf' : 'image';
+      const res = await fetch('/api/categorise-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileType, base64, filename: file.name, context }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const e = new Error('proxy_error');
+        e.userMessage = proxyErrorMessage(res.status, body);
+        throw e;
+      }
+      const data = await res.json();
+      return (data.results || []).map(r => normaliseServerRow(r, file.name));
     }
 
-    /** Extract a receipt image — same pipeline as categoriseFile but ensures at least one row. */
+    /** POST to /api/extract-receipt — single receipt image with line items. */
     async function extractReceipt(file, options = {}) {
-      const rows = await categoriseFile(file, options);
-      if (!rows.length) return { error: 'unreadable' };
-      return { lineItems: rows, totalAmount: rows.reduce((s, r) => s + Math.abs(r.amount || 0), 0), merchant: rows[0]?.description || 'Receipt' };
+      const { context = null } = options;
+      const base64 = await fileToBase64(file);
+      const res = await fetch('/api/extract-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, context }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const e = new Error('proxy_error');
+        e.userMessage = proxyErrorMessage(res.status, body);
+        throw e;
+      }
+      return await res.json();
     }
 
     function fileToBase64(file) {
@@ -2159,6 +1991,12 @@ RULES:
         if (state._migrated && !state.settings.hasSeenOnboarding) {
           showToast('Welcome back. We kept everything from your last setup.', 'success');
         }
+      }, []);
+
+      // One-time cleanup: earlier build asked users to paste a personal API key.
+      // Users no longer manage keys — parsing routes through the server proxy.
+      useEffect(() => {
+        try { localStorage.removeItem('ttj_anthropic_key'); } catch {}
       }, []);
 
       // Ctrl+Shift+R / Cmd+Shift+R → nuclear reset (matches Settings → Start fresh).
@@ -2597,14 +2435,8 @@ RULES:
           </p>
 
           <p className="t-small t-muted mt-2 text-center" style={{lineHeight: 1.5}}>
-            Parsing uses AI — usually takes 5–15 seconds per page. Bank statements cost roughly R0.10–R0.50 each.
+            Parsing uses AI — usually takes 5–15 seconds per page.
           </p>
-          {!getApiKey() && (
-            <div className="card mt-3" style={{background: 'var(--amber-dim)', borderColor: 'rgba(245,158,11,0.3)', padding: 12}}>
-              <div className="t-small t-amber" style={{fontWeight: 600}}>No API key set</div>
-              <div className="t-small t-secondary mt-1">PDFs need your Anthropic key. Save one under Settings → AI key (or skip this step and add files later).</div>
-            </div>
-          )}
 
           <div className="text-center mt-4">
             <button className="btn-link" onClick={() => setStep('processing')}>
@@ -5377,90 +5209,6 @@ RULES:
     }
 
     /* ===== SETTINGS SHEET ===== */
-    /* ===== AI key section — Anthropic API key entry + validation =====
-       Key is stored in localStorage ('ttj_anthropic_key') and never
-       included in any backup export. Zero-retention header is set on
-       every call in callClaudeParse. */
-    function ApiKeySection() {
-      const [key, setKeyLocal] = useState(() => getApiKey());
-      const [show, setShow] = useState(false);
-      const [busy, setBusy] = useState(false);
-      const [status, setStatus] = useState(() => getApiKey() ? 'saved' : 'empty'); // 'empty' | 'saved' | 'valid' | 'invalid' | 'checking'
-      const [message, setMessage] = useState('');
-
-      const save = async () => {
-        setBusy(true);
-        setStatus('checking');
-        setMessage('Checking with Anthropic…');
-        const result = await validateAnthropicKey(key);
-        setBusy(false);
-        if (result.ok) {
-          setApiKey(key);
-          setStatus('valid');
-          setMessage('Key valid ✓');
-        } else {
-          setStatus('invalid');
-          setMessage(result.reason);
-        }
-      };
-
-      const clear = () => {
-        try { localStorage.removeItem(ANTHROPIC_KEY_STORAGE); } catch {}
-        setKeyLocal('');
-        setStatus('empty');
-        setMessage('');
-      };
-
-      const masked = key ? '•'.repeat(Math.min(key.length, 40)) : '';
-      return (
-        <div className="flex flex-col gap-4">
-          <div>
-            <div className="t-h2 mb-2">Anthropic API key</div>
-            <p className="t-small t-secondary mb-3" style={{lineHeight: 1.55}}>
-              Required for PDF statement import and receipt scanning. Stored only on this device in localStorage. Sent only to api.anthropic.com with zero-retention headers.
-            </p>
-            <label className="input-label">API key</label>
-            <div style={{position: 'relative'}}>
-              <input
-                className="input"
-                type={show ? 'text' : 'password'}
-                value={show ? key : (status === 'saved' || status === 'valid' ? masked : key)}
-                onChange={e => { setKeyLocal(e.target.value); setStatus('empty'); setMessage(''); }}
-                placeholder="sk-ant-api03-…"
-                autoComplete="off"
-                spellCheck={false}
-                style={{paddingRight: 72}}
-              />
-              <button
-                type="button"
-                onClick={() => setShow(s => !s)}
-                className="t-small t-teal"
-                style={{position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', padding: '4px 8px'}}
-              >{show ? 'Hide' : 'Show'}</button>
-            </div>
-            {message && (
-              <div className={`t-small mt-2 ${status === 'valid' ? 't-teal' : status === 'invalid' ? 't-red' : 't-muted'}`}>{message}</div>
-            )}
-            {!message && status === 'saved' && (
-              <div className="t-small t-teal mt-2">Key saved ✓ (click Save to re-verify)</div>
-            )}
-          </div>
-
-          <div className="flex gap-2">
-            <button className="btn btn-primary" disabled={busy || !key} onClick={save}>
-              {busy ? 'Checking…' : 'Save'}
-            </button>
-            {key && <button className="btn btn-ghost" disabled={busy} onClick={clear}>Clear</button>}
-          </div>
-
-          <div className="card" style={{background: 'var(--teal-dim)', borderColor: 'var(--border-teal)', padding: 16}}>
-            <div className="t-small" style={{fontWeight: 600, marginBottom: 4}}>How to get a key</div>
-            <div className="t-small t-secondary">1. Sign up at console.anthropic.com · 2. Add billing · 3. Create a key under API keys · 4. Paste here.</div>
-          </div>
-        </div>
-      );
-    }
-
     /* ===== Privacy section — Skip AI toggle + privacy details link ===== */
     function PrivacySection({ onShowModal }) {
       const { state, dispatch, showToast } = useData();
@@ -5493,8 +5241,14 @@ RULES:
           </button>
 
           <div className="card" style={{padding: 16, background: 'var(--teal-dim)', borderColor: 'var(--border-teal)'}}>
-            <div className="t-small" style={{fontWeight: 600, marginBottom: 4}}>Proof we go direct</div>
-            <div className="t-small t-secondary">AI calls go straight from your browser to <code style={{fontSize: 11, background: 'var(--bg-app)', padding: '1px 4px', borderRadius: 3}}>api.anthropic.com</code>. No middleman, no server logs, no database. Open DevTools → Network to verify. Your API key lives only in this device's localStorage.</div>
+            <div className="t-small" style={{fontWeight: 600, marginBottom: 4}}>How parsing works</div>
+            <div className="t-small t-secondary">
+              Document parsing is powered by Anthropic's Claude AI.<br/>
+              • Documents are sent to our server, forwarded to Anthropic, and results returned.<br/>
+              • We do not store your documents or parsed transactions on our server.<br/>
+              • Anthropic is configured for zero-retention: they do not log or train on your data.<br/>
+              • Your transactions are stored only on this device.
+            </div>
           </div>
         </div>
       );
@@ -5658,7 +5412,6 @@ RULES:
       const menu = (
         <div className="flex flex-col gap-2">
           <SectionLink to="profile"  label="Profile" />
-          <SectionLink to="ai_key"   label="AI key" />
           <SectionLink to="accounts" label="Accounts" />
           <SectionLink to="privacy"  label="Privacy" />
           <SectionLink to="backup"   label="Cloud backup" />
@@ -5704,8 +5457,6 @@ RULES:
             </div>
           </div>
         );
-      } else if (section === 'ai_key') {
-        content = <ApiKeySection />;
       } else if (section === 'privacy') {
         content = <PrivacySection onShowModal={() => setSection('privacy_modal')} />;
       } else if (section === 'privacy_modal') {
