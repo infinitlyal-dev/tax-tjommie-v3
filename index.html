@@ -994,16 +994,23 @@
         const bl = tp.businessLoanInterest || {};
         const blAnnual = bl.enabled ? (bl.annualAmount || 0) : 0;
 
-        // Additional from logged expenses this year
+        // Additional from logged expenses this year.
+        // Only NEGATIVE amounts count as deductions — positive amounts on work
+        // categories are usually client payments (income), not expenses.
         const txns = (userData.transactions || []).filter(t => t.taxYear === year && t.isDeductible);
-        const txnDeductible = txns.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0);
+        const txnDeductible = txns.reduce((sum, t) => {
+          const amt = t.amount || 0;
+          return amt < 0 ? sum + (-amt) : sum;
+        }, 0);
 
         // Aggregate imported txns into per-bucket contributions (D4 — shown as
         // "Imported from statements" lines on the Tax summary).
         const importedByBucket = {};
         txns.forEach(t => {
           if (!t.taxCategory) return;
-          importedByBucket[t.taxCategory] = (importedByBucket[t.taxCategory] || 0) + Math.abs(t.amount || 0);
+          const amt = t.amount || 0;
+          if (amt >= 0) return;
+          importedByBucket[t.taxCategory] = (importedByBucket[t.taxCategory] || 0) + (-amt);
         });
 
         const totalDeductions = homeOfficeAnnual + travelAnnual + phoneAnnual + equipAnnual + profAnnual + mkAnnual + raAnnual + donationAnnual + bdAnnual + blAnnual + txnDeductible;
@@ -1077,8 +1084,10 @@
       education_personal:   { label: 'Education',              group: 'personal', dot: 'muted' },
       gifts:                { label: 'Gifts',                  group: 'personal', dot: 'muted' },
       debt_repayment:       { label: 'Debt repayment',         group: 'personal', dot: 'muted' },
+      retirement_annuity:   { label: 'Retirement annuity',     group: 'personal', dot: 'muted' },
       other_personal:       { label: 'Other',                  group: 'personal', dot: 'muted' },
       // System
+      income:               { label: 'Income',                 group: 'system', dot: 'teal' },
       ignore:               { label: 'Ignored',                group: 'system', dot: 'muted' },
       uncategorised:        { label: 'Uncategorised',          group: 'system', dot: 'muted' },
     };
@@ -1438,6 +1447,9 @@
     /** Work-category → taxProfile bucket (used to set per-bucket imported aggregates).
         Mirrors the grouping in CATEGORIES['work']. */
     function existingWorkCatToTaxBucket(catKey) {
+      // Only map to buckets that have a dedicated line on the Tax summary.
+      // Everything else still counts in the total deduction (txnDeductible)
+      // but doesn't inflate a mismatched bucket's "Imported from statements" row.
       const m = {
         home_office: 'homeOffice',
         vehicle_travel: 'travel',
@@ -1449,9 +1461,6 @@
         marketing: 'marketing',
         office_supplies: 'marketing',
         client_entertainment: 'marketing',
-        subcontractors: 'marketing',
-        bank_charges: 'marketing',
-        other_business: 'marketing',
       };
       return m[catKey] || null;
     }

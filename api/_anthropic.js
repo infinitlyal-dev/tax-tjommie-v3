@@ -103,17 +103,47 @@ export async function callAnthropic({ system, messages, maxTokens = 4096, apiKey
 
 /**
  * Parse a JSON array/object out of a Claude response, tolerating
- * ``` fences and light prose wrappers.
+ * ``` fences, light prose wrappers, AND output truncation.
+ *
+ * On truncation (output hits max_tokens mid-array) the normal "slice to last ]"
+ * trick fails — there's no closing bracket. We fall back to scanning each
+ * top-level {...} object in the array and keeping every one that parses.
+ * This is the difference between "503 parse_failed" and "got 180 of 220
+ * transactions through" during a long-statement upload.
  */
 export function parseJsonPayload(text, { asArray = true } = {}) {
   if (!text) return null;
   let cleaned = text.trim();
   cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  const first = cleaned.indexOf(asArray ? '[' : '{');
-  const last = cleaned.lastIndexOf(asArray ? ']' : '}');
-  if (first === -1 || last === -1) return null;
-  cleaned = cleaned.slice(first, last + 1);
-  try { return JSON.parse(cleaned); } catch { return null; }
+  const openChar = asArray ? '[' : '{';
+  const closeChar = asArray ? ']' : '}';
+  const first = cleaned.indexOf(openChar);
+  if (first === -1) return null;
+  const last = cleaned.lastIndexOf(closeChar);
+  if (last > first) {
+    try { return JSON.parse(cleaned.slice(first, last + 1)); } catch {}
+  }
+  if (!asArray) return null;
+  // Truncation recovery — scan complete top-level objects inside the array.
+  const body = cleaned.slice(first + 1);
+  const objects = [];
+  let depth = 0, start = -1, inStr = false, escape = false;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inStr) { escape = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === '{') { if (depth === 0) start = i; depth++; }
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try { objects.push(JSON.parse(body.slice(start, i + 1))); } catch {}
+        start = -1;
+      }
+    }
+  }
+  return objects.length ? objects : null;
 }
 
 /** Optional context enrichment for the system prompt. */
